@@ -14,23 +14,33 @@ typedef unsigned char byte;
 
 ptr bettermalloc(u4 size) {
     byte *result;
-    while ((result = malloc(size)) == 0);
+    while ((result = malloc(size + sizeof(byte))) == 0);
+    result[ 0 ] = 243;
 
-    printf("MALLOC %p\n", result);
-    return result;
+    return &result[ 1 ];
 }
 
 ptr betterrealloc(ptr original, u4 size) {
     byte *result;
-    printf("meow %p %lu\n", &((byte *) original)[ -1 ], size + sizeof(byte));
     while ((result = realloc(&((byte *) original)[ -1 ], size + sizeof(byte))) == 0);
 
-    return result;
+    return &result[ 1 ];
+}
+
+void __free(byte *x) {
+    if (x[ -3 ] == 247) { // array
+        free(&x[ -3 ]);
+    } else if (x[ -1 ] == 243) {
+        free(&x[ -1 ]);
+    } else {
+        perror("What the hell\n");
+        exit(1);
+    }
 }
 
 #define malloc(x)     bettermalloc(x)
 #define realloc(x, s) betterrealloc(x, s)
-#define free(x)       free(&((byte *) x)[ -1 ])
+#define free(x)       __free((ptr)x)
 
 ptr betterarray(u4 unit, u4 _count) {
     u4  count     = _count + 1;
@@ -42,41 +52,45 @@ ptr betterarray(u4 unit, u4 _count) {
     return &pointer[ 2 ];
 }
 
-ptr grow(ptr _array, u4 inflation) {
-    u4 *array = _array;
-    u4  count = array[ -1 ];
-    u4  size  = array[ -2 ];
+ptr grow(ptr __array, u4 inflation) {
+    u4 *_array = __array;
+    u4 *array  = &_array[ -2 ];
+    u4  unit   = array[ 0 ];
+    u4  count  = array[ 1 ];
 
-    printf("%i %i\n", size, count);
-    u4 new_size = size * (count + inflation) + 2 * sizeof(u4);
+    u4 new_size = unit * (count + inflation) + 2 * sizeof(u4);
 
-    printf("%p\n", &array[ -2 ]);
-    u4 *arr2  = realloc(&array[ -2 ], new_size);
-    arr2[ 1 ] = size + inflation;
-
-    return &arr2[ 2 ];
-}
-
-ptr shrink(ptr _array, u4 deflation) {
-    u4 *array = _array;
-    u4  count = array[ -1 ];
-    u4  size  = array[ -2 ];
-
-    u4 new_size = (size - deflation) * count + 2 * sizeof(u4);
-
-    u4 *arr2  = realloc(&array[ -2 ], new_size);
-    arr2[ 1 ] = size - deflation;
+    u4 *arr2  = realloc(array, new_size);
+    arr2[ 1 ] = count + inflation;
 
     return &arr2[ 2 ];
 }
 
-#define newarray(unit)     (unit *) betterarray(sizeof(unit), 0)
-#define array(unit, count) (unit *) betterarray(sizeof(unit), count)
+ptr shrink(ptr __array, u4 deflation) {
+    u4 *_array = __array;
+    u4 *array  = &_array[ -2 ];
+    u4  unit   = array[ 0 ];
+    u4  count  = array[ 1 ];
+
+    u4 new_size = unit * (count - deflation) + 2 * sizeof(u4);
+
+    u4 *arr2                           = realloc(array, new_size);
+    ((byte *) arr2)[ new_size - unit ] = 0;
+    arr2[ 1 ]                          = count - deflation;
+
+    return &arr2[ 2 ];
+}
+
+#define newarray(unit)     ((unit *) betterarray(sizeof(unit), 0))
+#define array(unit, count) ((unit *) betterarray(sizeof(unit), count))
 #define count(arr)         (((u4 *) arr)[ -1 ] - 1)
-#define unit_size(arr)     (((u4 *) arr)[ -1 ])
+#define unit_size(arr)     (((u4 *) arr)[ -1 ] - 1)
+#define last(arr)          (arr[ count(arr) - 1 ])
 #define push(arr, item)                                                                  \
-    grow(arr, 1);                                                                        \
-    arr[ count(arr) - 1 ] = item
+    ({                                                                                   \
+        grow(arr, 1);                                                                    \
+        arr[ count(arr) - 1 ] = item;                                                    \
+    })
 #define pop(arr)                                                                         \
     ({                                                                                   \
         auto output = arr[ count(arr) - 1 ];                                             \
@@ -103,17 +117,27 @@ pipeout betterpipe() {
     return (pipeout) { .read = fd[ 0 ], .write = fd[ 1 ] };
 }
 
-void bettersend(int fd, ptr data, u4 size) {
+void bettersend(pipeout fd, ptr data, u4 size) {
+    if (fd.write == 0) {
+        perror("Write not allowed on this pipe\n");
+        exit(1);
+    }
+
     byte mode = 0; // mode 0 is static data and mode 1 is an array
-    write(fd, &mode, sizeof(byte));
-    write(fd, &size, sizeof(u4)); // send size data through pipe
-    write(fd, data, size);        // send actual data
+    write(fd.write, &mode, sizeof(byte));
+    write(fd.write, &size, sizeof(u4)); // send size data through pipe
+    write(fd.write, data, size);        // send actual data
 }
 
 // !! ALLOCATES MEMORY! FREE AFTERWARDS !!
-ptr betterread(int fd) {
+ptr betterread(pipeout fd) {
+    if (fd.read == 0) {
+        perror("Read not allowed on this pipe\n");
+        exit(1);
+    }
+
     byte mode = 254;
-    while (read(fd, &mode, sizeof(byte)) <= 0) { // data is not yet available
+    while (read(fd.read, &mode, sizeof(byte)) <= 0) { // data is not yet available
         printf("%i\n", mode);
 
         if (mode == (byte) -1) {
@@ -123,10 +147,10 @@ ptr betterread(int fd) {
     }
 
     u4 size;
-    read(fd, &size, sizeof(u4)); // read size
+    read(fd.read, &size, sizeof(u4)); // read size
 
     ptr data = malloc(sizeof(byte) * size);
-    read(fd, data, sizeof(byte) * size);
+    read(fd.read, data, sizeof(byte) * size);
 
     return data;
 }
@@ -135,12 +159,12 @@ ptr betterread(int fd) {
 #define send(unit, fd, data)                                                             \
     ({                                                                                   \
         unit *__Data = data;                                                             \
-        bettersend(fd.write, &__Data, sizeof(__Data));                                   \
+        bettersend(fd, &__Data, sizeof(__Data));                                         \
     })
 void __read(int fd, void *buf, size_t size) { read(fd, buf, size); }
 #define read(unit, fd)                                                                   \
     ({                                                                                   \
-        unit *__Data = betterread(fd.read);                                              \
+        unit *__Data = betterread(fd);                                                   \
         unit  _Data  = *__Data;                                                          \
         free(__Data);                                                                    \
         _Data;                                                                           \
@@ -148,12 +172,17 @@ void __read(int fd, void *buf, size_t size) { read(fd, buf, size); }
 
 // Does not work with nested pointers.
 void betterarraysend(pipeout fd, ptr _array) {
+    if (fd.write == 0) {
+        perror("Write not allowed on this pipe\n");
+        exit(1);
+    }
+
     u4 *array  = _array;
     u4  amount = count(array);
     u4  unit   = unit_size(array);
 
-    bettersend(fd.write, &unit, sizeof(u4));
-    bettersend(fd.write, &amount, sizeof(u4));
+    bettersend(fd, &unit, sizeof(u4));
+    bettersend(fd, &amount, sizeof(u4));
 
     byte *send_array = _array;
 
@@ -164,7 +193,11 @@ void betterarraysend(pipeout fd, ptr _array) {
 }
 
 ptr betterarrayread(pipeout fd) {
-    printf("%p\n", &fd);
+    if (fd.read == 0) {
+        perror("Read not allowed on this pipe\n");
+        exit(1);
+    }
+
     u4 unit   = read(u4, fd);
     u4 amount = read(u4, fd);
     u8 size   = unit * amount;
@@ -177,4 +210,4 @@ ptr betterarrayread(pipeout fd) {
 }
 
 #define send_array(fd, arr)  betterarraysend(fd, arr)
-#define read_array(unit, fd) (unit *) betterarrayread(fd)
+#define read_array(unit, fd) ((unit *) betterarrayread(fd))
