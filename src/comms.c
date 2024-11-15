@@ -1,0 +1,1 @@
+#define MSG_EXIT 1

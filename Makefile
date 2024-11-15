@@ -14,4 +14,8 @@ run_cds:
 	build/cds
 
 run_shell:
+	sleep 0.2
 	build/shell
+
+count:
+	@find . -name '*.h' -o -name '*.c' | xargs wc -lc
