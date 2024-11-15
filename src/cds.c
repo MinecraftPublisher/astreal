@@ -29,7 +29,7 @@ int main() {
     // listen for new clients
 
     // wipe file
-    auto config_file = fopen(FILENAME, "w");
+    var config_file = fopen(FILENAME, "w");
     fprintf(config_file, DONT_TOUCH_MESSAGE);
     fclose(config_file);
 
@@ -47,8 +47,8 @@ int main() {
 
             printf("new client! %s\n", shell_pipe_id);
 
-            auto child_pid = demon({
-                auto shell_pipe = open_pipe(shell_pipe_id);
+            demon({
+                var shell_pipe = open_pipe(shell_pipe_id);
 
                 send(byte, shell_pipe, 24);
                 printf("wrote to client.\n");
