@@ -1,28 +1,44 @@
+#include "color.c"
 #include "comms.c"
 #include "macros.c"
 #include <stdio.h>
 #include <stdlib.h>
 
 int main() {
-    srand(0);
+    srand(time(0));
 
-    printf("Starting Astreal shell...\n");
+    byte has_color = yes;
 
-    var cds_pipe_id = pipe();
+    print("Starting Astreal shell...");
+    var cds_stream = stream();
 
-    printf("Attempting to communicate with Astreal CDS... %s\n", cds_pipe_id);
+    print("Attempting to communicate with Astreal CDS...");
+    stream_to_station(cds_stream, "/tmp/cds_pipes.txt");
 
-    var config_file = fopen("/tmp/cds_pipes.txt", "a");
-    fprintf(config_file, "%s\n", cds_pipe_id);
-    fclose(config_file);
+    print("Waiting for a connection signal from CDS...");
+    var cds_response = read(byte, cds_stream);
 
-    var cds_pipe = open_pipe(cds_pipe_id);
+    if (cds_response != MSG_CONNECT_SUCCESS) {
+        printf("Failed to connect to CDS server: Invalid response. %i\n", cds_response);
+        exit(1);
+    }
 
-    printf("Waiting for a connection signal from CDS...\n");
-    
-    var cds_response = read(byte, cds_pipe);
+    var cds_id = read(long, cds_stream);
 
-    printf("%i\n", cds_response);
+    print("Connection succeeded! Welcome to Astreal.");
+    printf("\x1b"
+           "c");
 
-    send(byte, cds_pipe, MSG_EXIT);
+    fprint(format(
+        "Welcome to " BRED "Astreal" RESET ".\n"
+        "Your client ID is: " YEL "%li" RESET "\n"
+        "  -- Type " CYN "HELP" RESET " for a guide.\n"
+        "  -- Type " CYN "QUIT" RESET " to exit at any time.\n"
+        "  -- Type " GRN "COLOR" RESET " to toggle color display.\n",
+        cds_id));
+
+    while (1) {
+
+    }
 }
+
