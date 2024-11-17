@@ -22,6 +22,8 @@ typedef unsigned char byte;
 #define cast_index(arr, type, index) ((type *) arr)[ index ]
 #define cast_ptr(arr, type, index)   (&cast_index(arr, type, index))
 
+ptr __malloc(u4 size) { return malloc(size); }
+
 ptr bettermalloc(u4 size) {
     ptr result;
     while ((result = malloc(size + sizeof(byte))) == 0);
@@ -46,8 +48,8 @@ void __free(ptr x) {
     } else if (cast_index(x, byte, -1) == 243) {
         free(cast_ptr(x, byte, -1));
     } else {
-        printf("What the hell %p\n", x);
-        exit(1);
+        printf("Warn: not freeing normal memory %p\n", x);
+        // exit(1);
     }
 }
 
@@ -56,6 +58,12 @@ void std_free(ptr x) { free(x); }
 #define malloc(x)     bettermalloc(x)
 #define realloc(x, s) betterrealloc(x, s)
 #define free(x)       __free((ptr) x)
+#define new(type)                                                                        \
+    ({                                                                                   \
+        byte *__ptr__ = malloc(sizeof(type));                                            \
+        __ptr__[ 0 ]  = 0;                                                               \
+        (type *) __ptr__;                                                                \
+    })
 
 ptr betterarray(u4 unit, u4 _count) {
     u4  count                     = _count + 1;
@@ -120,6 +128,7 @@ void memoryFailure(char *file, int line) {
 
 typedef char *string;
 
+// #define print(text) printf(text "\n")
 #define format(fmts, ...)                                                                \
     ({                                                                                   \
         string buf = NULL;                                                               \
@@ -142,6 +151,32 @@ string betterpipe() {
 
 pipeout open_pipe(string pipe_id) { return open(pipe_id, O_RDWR); }
 
+typedef struct {
+    string  read_id;
+    string  write_id;
+    pipeout read;
+    pipeout write;
+} stream;
+
+stream create_stream() {
+    string  read_pipe  = betterpipe();
+    string  write_pipe = betterpipe();
+    pipeout read_fd    = open_pipe(read_pipe);
+    pipeout write_fd   = open_pipe(write_pipe);
+
+    return (stream) {
+        .read_id = read_pipe, .write_id = write_pipe, .read = read_fd, .write = write_fd
+    };
+}
+
+void stream_to_station(stream input, string station) {
+    var config_file = fopen(station, "a");
+    fprintf(config_file, "%s\n%s\n", input.write_id, input.read_id);
+    fclose(config_file);
+}
+
+#define stream() create_stream()
+
 void bettersend(pipeout fd, ptr data, u4 size) {
     byte mode = 0; // mode 0 is static data and mode 1 is an array
 
@@ -162,8 +197,6 @@ ptr betterread(pipeout fd) {
         }
     }
 
-    printf("done!\n");
-
     u4 size;
     read(fd, &size, sizeof(u4)); // read size
 
@@ -172,17 +205,16 @@ ptr betterread(pipeout fd) {
 
     return data;
 }
-
 #define pipe() betterpipe()
 #define send(unit, fd, data)                                                             \
     ({                                                                                   \
         unit __Data = data;                                                              \
-        bettersend(fd, &__Data, sizeof(__Data));                                         \
+        bettersend(fd.write, &__Data, sizeof(__Data));                                         \
     })
 void __read(int fd, void *buf, size_t size) { read(fd, buf, size); }
 #define read(unit, fd)                                                                   \
     ({                                                                                   \
-        unit *__Data = betterread(fd);                                                   \
+        unit *__Data = betterread(fd.read);                                              \
         unit  _Data  = *__Data;                                                          \
         free(__Data);                                                                    \
         _Data;                                                                           \
@@ -202,19 +234,69 @@ void betterarraysend(pipeout fd, ptr array) {
     }
 }
 
-ptr betterarrayread(pipeout fd) {
+ptr betterarrayread(stream fd) {
     u4 unit   = read(u4, fd);
     u4 amount = read(u4, fd);
     u8 size   = unit * amount;
 
     ptr arr = betterarray(unit, amount);
 
-    for (u8 i = 0; i < size; i++) { __read(fd, cast_ptr(arr, byte, i), 1); }
+    for (u8 i = 0; i < size; i++) { __read(fd.read, cast_ptr(arr, byte, i), 1); }
 
     return arr;
 }
 
-#define send_array(fd, arr)  betterarraysend(fd, arr)
+#define DONT_TOUCH_MESSAGE                                                               \
+    "!DO NOT TOUCH THIS FILE!\n"                                                         \
+    "This file is a communication stream, altering its contents will cause programs to " \
+    "crash.\n\n"
+#define DONT_TOUCH_MESSAGE_LENGTH 116
+
+int file_size(FILE *fp) {
+    int last_pos = ftell(fp);
+    fseek(fp, 0, SEEK_END);
+    int end_pos = ftell(fp);
+
+    fseek(fp, last_pos, SEEK_SET);
+
+    return end_pos - last_pos;
+}
+
+#define create_station(filename, pipe_name, code)                                        \
+    ({                                                                                   \
+        var config_file = fopen(filename, "w");                                          \
+        fprintf(config_file, DONT_TOUCH_MESSAGE);                                        \
+        fclose(config_file);                                                             \
+                                                                                         \
+        config_file = fopen(filename, "r");                                              \
+        fseek(config_file, 0, SEEK_END);                                                 \
+                                                                                         \
+        while (1) {                                                                      \
+            int size = file_size(config_file);                                           \
+            if (size > 0) {                                                              \
+                string read_pipe_id = newarray(char);                                    \
+                char   init         = fgetc(config_file);                                \
+                                                                                         \
+                do push(read_pipe_id, init);                                             \
+                while ((init = fgetc(config_file)) != '\n' && init != EOF);              \
+                                                                                         \
+                string write_pipe_id = newarray(char);                                   \
+                init                 = fgetc(config_file);                               \
+                                                                                         \
+                do push(write_pipe_id, init);                                            \
+                while ((init = fgetc(config_file)) != '\n' && init != EOF);              \
+                                                                                         \
+                stream pipe_name = { .read_id  = read_pipe_id,                           \
+                                     .write_id = write_pipe_id,                          \
+                                     .write    = open_pipe(write_pipe_id),               \
+                                     .read     = open_pipe(read_pipe_id) };                  \
+                                                                                         \
+                demon({ code });                                                         \
+            }                                                                            \
+        }                                                                                \
+    })
+
+#define send_array(fd, arr)  betterarraysend(fd.write, arr)
 #define read_array(unit, fd) ((unit *) betterarrayread(fd))
 
 #define pcat(a, b) a##b
@@ -237,3 +319,28 @@ ptr betterarrayread(pipeout fd) {
         cat(fork_, ID);                                                                  \
     })
 #define demon(code) __demon(code, expand(__COUNTER__))
+
+#define yes 1
+#define no  0
+
+void __print(string input, byte has_color) {
+    u4 len = strlen(input);
+
+    byte skip = no;
+    for (u4 i = 0; i < len; i++) {
+        if (input[ i ] == 1) skip = yes;
+        if (input[ i ] == 2) skip = no;
+
+        if (has_color || !skip) printf("%c", input[ i ]);
+    }
+
+    printf("\n");
+}
+
+void __fprint(string input, byte has_color) {
+    __print(input, has_color);
+    free(input);
+}
+
+#define print(x)  __print(x, has_color)
+#define fprint(x) __fprint(x, has_color)
