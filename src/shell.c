@@ -5,7 +5,6 @@
 #include <stdlib.h>
 
 byte has_color = yes;
-typedef byte bool;
 
 const var current_version = 0.11f;
 
