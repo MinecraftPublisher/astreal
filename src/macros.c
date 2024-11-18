@@ -6,12 +6,12 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
-// #include <fnctl.h>
 
 typedef void         *ptr;
 typedef unsigned long u8;
 typedef unsigned int  u4;
 typedef unsigned char byte;
+typedef byte bool;
 #define auto __auto_type
 #define var  __auto_type
 #include <unistd.h>
@@ -90,6 +90,22 @@ ptr grow(ptr _array, u4 inflation) {
 
 #define shrink(array, deflation) grow(array, -(deflation))
 
+#define get(type, array, index)                                                          \
+    (type)({                                                                             \
+        if (index >= count(array)) {                                                     \
+            printf("ERROR: Index %i out of bounds (%i).\n", index, count(array));        \
+            exit(1);                                                                     \
+        }                                                                                \
+        array[ index ];                                                                  \
+    })
+#define set(type, array, index, value)                                                   \
+    ({                                                                                   \
+        if (index >= count(array)) {                                                     \
+            printf("ERROR: Index %i out of bounds (%i).\n", index, count(array));        \
+            exit(1);                                                                     \
+        }                                                                                \
+        cast_index(array, type, index) = value;                                          \
+    })
 #define newarray(unit)     cast_ptr(betterarray(sizeof(unit), 0), unit, 0)
 #define array(unit, count) cast_ptr(betterarray(sizeof(unit), count), unit, 0)
 #define count(arr)         (cast_index(arr, u4, -1) - 1)
@@ -102,13 +118,13 @@ ptr grow(ptr _array, u4 inflation) {
     })
 #define pop(arr)                                                                         \
     ({                                                                                   \
-        auto output = arr[ count(arr) - 1 ];                                             \
+        var output = arr[ count(arr) - 1 ];                                              \
         shrink(arr, 1);                                                                  \
         output;                                                                          \
     })
 #define __copy_string(text, size)                                                        \
     ({                                                                                   \
-        auto __Data = array(char, size);                                                 \
+        var __Data = array(char, size);                                                  \
         strcpy(__Data, text);                                                            \
         __Data;                                                                          \
     })
@@ -177,6 +193,13 @@ void stream_to_station(stream input, string station) {
 
 #define stream() create_stream()
 
+#define stream_and_send(filename)                                                        \
+    ({                                                                                   \
+        var __Output = stream();                                                         \
+        stream_to_station(__Output, filename);                                           \
+        __Output;                                                                        \
+    })
+
 void bettersend(pipeout fd, ptr data, u4 size) {
     byte mode = 0; // mode 0 is static data and mode 1 is an array
 
@@ -209,7 +232,7 @@ ptr betterread(pipeout fd) {
 #define send(unit, fd, data)                                                             \
     ({                                                                                   \
         unit __Data = data;                                                              \
-        bettersend(fd.write, &__Data, sizeof(__Data));                                         \
+        bettersend(fd.write, &__Data, sizeof(__Data));                                   \
     })
 void __read(int fd, void *buf, size_t size) { read(fd, buf, size); }
 #define read(unit, fd)                                                                   \
@@ -303,7 +326,7 @@ int file_size(FILE *fp) {
 #define cat(a, b)  pcat(a, b)
 
 #define repeat(x, ...)                                                                   \
-    for (int cat(_, __VA_ARGS__) = 0; cat(_, __VA_ARGS__) < (x); cat(_, __VA_ARGS__)++)
+    for (var cat(_, __VA_ARGS__) = 0; cat(_, __VA_ARGS__) < (x); cat(_, __VA_ARGS__)++)
 
 #define expand(x) x
 #define __demon(code, ID)                                                                \
@@ -320,13 +343,13 @@ int file_size(FILE *fp) {
     })
 #define demon(code) __demon(code, expand(__COUNTER__))
 
-#define yes 1
-#define no  0
+const byte yes = 1;
+const byte no  = 0;
 
-void __print(string input, byte has_color) {
-    u4 len = strlen(input);
+void __print(string input, byte has_color, byte new_line) {
+    var len = strlen(input);
 
-    byte skip = no;
+    var skip = no;
     for (u4 i = 0; i < len; i++) {
         if (input[ i ] == 1) skip = yes;
         if (input[ i ] == 2) skip = no;
@@ -334,13 +357,82 @@ void __print(string input, byte has_color) {
         if (has_color || !skip) printf("%c", input[ i ]);
     }
 
-    printf("\n");
+    if (new_line) printf("\n");
 }
 
-void __fprint(string input, byte has_color) {
-    __print(input, has_color);
+void __fprint(string input, byte has_color, byte new_line) {
+    __print(input, has_color, new_line);
     free(input);
 }
 
-#define print(x)  __print(x, has_color)
-#define fprint(x) __fprint(x, has_color)
+#define print(x)    __print(x, has_color, yes)
+#define fprint(...) __fprint(format(__VA_ARGS__), has_color, yes)
+
+string readline() {
+    var  input = newarray(char);
+    char __init;
+
+    while ((__init = getchar()) == EOF);
+
+    if (__init <= 10 || __init == '\n') return input;
+    push(input, __init);
+
+    while (((__init = getchar()) != EOF) && __init != '\n' && __init > 10) {
+        push(input, __init);
+    }
+
+    input[ count(input) ] = 0;
+    return input;
+}
+
+#define equal(x, y) (strcmp(x, y) == 0)
+
+void inplace_tolower(string input) {
+    repeat(count(input), i) {
+        var cur = get(char, input, _i);
+        if (cur >= 'A' && cur <= 'Z') set(char, input, _i, cur - 'A' + 'a');
+    }
+}
+
+void __sleep(float seconds) {
+    var microseconds = (int) (seconds * 1000000);
+
+    usleep(microseconds);
+}
+#define sleep(x) __sleep(x)
+
+#define EXPAND(x, ...) x __VA_ARGS__ __VA_OPT__("")
+#define EXPAND1(x, ...) x EXPAND(__VA_ARGS__)
+#define EXPAND2(x, ...) x EXPAND1(__VA_ARGS__)
+#define EXPAND3(x, ...) x EXPAND2(__VA_ARGS__)
+#define EXPAND4(x, ...) x EXPAND3(__VA_ARGS__)
+#define EXPAND5(x, ...) x EXPAND4(__VA_ARGS__)
+#define EXPAND6(x, ...) x EXPAND5(__VA_ARGS__)
+#define EXPAND7(x, ...) x EXPAND6(__VA_ARGS__)
+#define EXPAND8(x, ...) x EXPAND7(__VA_ARGS__)
+#define EXPAND9(x, ...) x EXPAND8(__VA_ARGS__)
+#define EXPAND10(x, ...) x EXPAND9(__VA_ARGS__)
+#define EXPAND11(x, ...) x EXPAND10(__VA_ARGS__)
+#define EXPAND12(x, ...) x EXPAND11(__VA_ARGS__)
+#define EXPAND13(x, ...) x EXPAND12(__VA_ARGS__)
+#define EXPAND14(x, ...) x EXPAND13(__VA_ARGS__)
+#define EXPAND15(x, ...) x EXPAND14(__VA_ARGS__)
+#define EXPAND16(x, ...) x EXPAND15(__VA_ARGS__)
+#define EXPAND17(x, ...) x EXPAND16(__VA_ARGS__)
+#define EXPAND18(x, ...) x EXPAND17(__VA_ARGS__)
+#define EXPAND19(x, ...) x EXPAND18(__VA_ARGS__)
+#define EXPAND20(x, ...) x EXPAND19(__VA_ARGS__)
+#define EXPAND21(x, ...) x EXPAND20(__VA_ARGS__)
+#define EXPAND22(x, ...) x EXPAND21(__VA_ARGS__)
+#define EXPAND23(x, ...) x EXPAND22(__VA_ARGS__)
+#define EXPAND24(x, ...) x EXPAND23(__VA_ARGS__)
+#define EXPAND25(x, ...) x EXPAND24(__VA_ARGS__)
+#define EXPAND26(x, ...) x EXPAND25(__VA_ARGS__)
+#define EXPAND27(x, ...) x EXPAND26(__VA_ARGS__)
+#define EXPAND28(x, ...) x EXPAND27(__VA_ARGS__)
+#define EXPAND29(x, ...) x EXPAND28(__VA_ARGS__)
+#define EXPAND30(x, ...) x EXPAND29(__VA_ARGS__)
+#define EXPAND31(x, ...) x EXPAND30(__VA_ARGS__)
+#define EXPAND32(x, ...) x EXPAND31(__VA_ARGS__)
+
+#define reduce(...) EXPAND32(__VA_ARGS__)

@@ -3,6 +3,8 @@ all: clean cds shell run_cds
 clean:
 	rm -rf build/
 	mkdir build/
+	rm -rf astreal/
+	mkdir astreal/
 
 cds:
 	clang src/cds.c -o build/cds

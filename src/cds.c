@@ -1,6 +1,7 @@
+#include "color.c"
 #include "comms.c"
 #include "macros.c"
-#include "color.c"
+#include <stdio.h>
 #include <unistd.h>
 
 int main() {
@@ -10,10 +11,14 @@ int main() {
 
     byte has_color = yes;
 
-    create_station("/tmp/cds_pipes.txt", client, {
-        var client_id  = random();
+    printf("\x1b"
+           "c");
+    fflush(stdout);
 
-        printf("New client ID assigned as " BYEL "%li" RESET ".\n", client_id);
+    create_station("/tmp/cds_pipes.txt", client, {
+        var client_id = random();
+
+        printf(BLK "New client ID assigned as " BYEL "%li" BLK ".\n" RESET, client_id);
 
         send(byte, client, MSG_CONNECT_SUCCESS);
         send(long, client, client_id);
@@ -24,6 +29,24 @@ int main() {
             if (msg_out == MSG_EXIT) {
                 print("Client closed connection!");
                 exit(0);
+            } else if (msg_out == MSG_LOG) {
+                var input_log = read_array(char, client);
+
+                printf(
+                    cBBLK("[LOG]") BLK " Client " GRN "#%li" BLK ": " cWHT("%s"),
+                    client_id,
+                    input_log);
+                free(input_log);
+            } else if (msg_out == MSG_CHANGE_SID) {
+                var new_id = read(long, client);
+                if (new_id != client_id) {
+                    printf(
+                        BLK "Client " BYEL "%li" BLK
+                            "'s ID changed to " cBYEL("%li") ".\n",
+                        client_id,
+                        new_id);
+                }
+                client_id = new_id;
             }
         }
     });
