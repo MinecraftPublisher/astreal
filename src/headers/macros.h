@@ -11,11 +11,11 @@
 #include <unistd.h>
 
 // void pointer my beloved!
-typedef void         *ptr;
+typedef void *ptr;
 // i prefer byte count instead of bit count in uX names.
 typedef unsigned long u8;
 // i prefer byte count instead of bit count in uX names.
-typedef unsigned int  u4;
+typedef unsigned int u4;
 // byte? in c?
 typedef unsigned char byte;
 // bool? in c?
@@ -464,11 +464,19 @@ string readline() {
 
 #define equal(x, y) /* Checks the equality of two strings. */ (strcmp(x, y) == 0)
 
-// Turns a string into lowercase by altering the original string.
+// Turns a STRING into lowercase by altering the original string.
 void inplace_tolower(string input) {
     repeat(count(input), i) {
         var cur = get(char, input, _i);
         if (cur >= 'A' && cur <= 'Z') set(char, input, _i, cur - 'A' + 'a');
+    }
+}
+
+// Turns a string into UPPERCASE by altering the original string.
+void inplace_toupper(string input) {
+    repeat(count(input), i) {
+        var cur = get(char, input, _i);
+        if (cur >= 'a' && cur <= 'z') set(char, input, _i, cur - 'a' + 'A');
     }
 }
 
@@ -540,7 +548,8 @@ text command(2, 2, { "get up", stage_main }, { "stay", stage_bed }
 
  */
 
-void                          sample_stage(ptr user) {}
+void sample_stage(ptr user) {}
+// function pointer? in c?
 typedef typeof(sample_stage) *stage;
 
 struct command_choice {
@@ -548,8 +557,8 @@ struct command_choice {
     stage  func_ptr;
 };
 
-#define cmd(name, func)                                                                  \
-    (struct command_choice) { name, func }
+#define cmd(name, func) /* less keystrokes! */                                           \
+    (struct command_choice) { name, (stage) func }
 
 enum command_func_options {
     hide_commands    = 0,
@@ -557,18 +566,73 @@ enum command_func_options {
     commands_in_text = 2
 };
 
-stage command(enum command_func_options commands_option, u4 length, ...) {
+/*
+
+0: number of commands, 1: whether to show possible commands or not.
+command(2, 2, { "get up", stage_main }, { "stay", stage_bed }
+    );
+
+ */
+stage command(
+    enum command_func_options commands_option, string help_text, u4 length, ...) {
     va_list cmd_list;
     va_start(cmd_list, length);
 
-    var cmds = array(struct command_choice, length);
+    var cmds               = array(struct command_choice, length + 1);
+    var available_commands = copy_string("Available commands:\n[HELP]\n");
 
-    repeat(length) cmds[ _ ] = va_arg(cmd_list, struct command_choice);
+    repeat(length) {
+        cmds[ _ ]      = va_arg(cmd_list, struct command_choice);
+        cmds[ _ ].name = copy_string(cmds[ _ ].name);
+        inplace_toupper(cmds[ _ ].name);
+
+        var old_coms       = available_commands;
+        available_commands = format("%s\n[%s]", available_commands, cmds[ _ ].name);
+        free(old_coms);
+
+        inplace_tolower(cmds[ _ ].name);
+    }
+
     va_end(cmd_list);
 
-    var choice = -1;
+    var default_time = 0.05f;
+    var has_color    = no;
 
-    while (choice == -1) { var input = readline(); }
+    var choice = (ptr) -1;
+
+    printf("\n");
+    if (commands_option == commands_in_text) type(available_commands);
+
+    printf("\n> ");
+    fflush(stdout);
+
+    while (choice == (ptr) -1) {
+        var input = readline();
+        inplace_tolower(input);
+
+        repeat(length) {
+            if (equal(input, cmds[ _ ].name)) {
+                choice = cmds[ _ ].func_ptr;
+                break;
+            }
+        }
+
+        if (choice != (ptr) -1) {
+            free(input);
+            break;
+        }
+
+        if (equal(input, "help")) {
+            printf("%s\n", help_text);
+            if (commands_option != hide_commands) type(available_commands);
+        }
+
+        __print("Invalid command!", no, yes);
+        free(input);
+    }
 
     free(cmds);
+    free(available_commands);
+
+    return choice;
 }

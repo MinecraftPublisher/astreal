@@ -1,6 +1,6 @@
 #include "../headers/common.h"
 
-float default_time = 0.05f;
+float default_time = 0.005f;
 
 void stage_main(game_data *user) {
     //TODO
@@ -16,6 +16,8 @@ void stage_intro(game_data *user) {
              "\"A zoo reports the escape of five camels.....\"\n"),
         "The sound of the TV news wakes you up.\n"
         "Today is a Saturday, a window of peace before you have to go to work again on Sunday."));
+    
+    command(commands_in_text, "", 1, cmd("get up", stage_main));
     
     stage_main(user);
 }
