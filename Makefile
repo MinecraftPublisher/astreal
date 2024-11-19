@@ -1,4 +1,4 @@
-all: clean cds shell run_cds
+all: clean cds shell stages count
 
 clean:
 	rm -rf build/
@@ -7,10 +7,10 @@ clean:
 	mkdir astreal/
 
 cds:
-	clang src/cds.c -o build/cds
+	clang -rdynamic src/cds.c -o build/cds
 
 shell:
-	clang src/shell.c -o build/shell
+	clang -rdynamic src/shell.c -o build/shell
 
 run_cds:
 	build/cds
@@ -19,5 +19,10 @@ run_shell:
 	sleep 0.2
 	build/shell
 
+stages:
+	clang -shared -fPIC src/stages/*.c -o build/stages.so
+
 count:
+	@echo
+	@echo "Line count:"
 	@find . -name '*.h' -o -name '*.c' | xargs wc -lc

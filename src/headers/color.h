@@ -1,3 +1,5 @@
+#pragma once
+
 // Regular text
 #define BLK "\1\e[0;30m\2"
 #define RED "\1\e[0;31m\2"

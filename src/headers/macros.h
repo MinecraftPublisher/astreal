@@ -1,29 +1,41 @@
+#pragma once
+
+// Ooh. Massive.
+#include <dlfcn.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <time.h>
 #include <unistd.h>
 
+// void pointer my beloved!
 typedef void         *ptr;
+// i prefer byte count instead of bit count in uX names.
 typedef unsigned long u8;
+// i prefer byte count instead of bit count in uX names.
 typedef unsigned int  u4;
+// byte? in c?
 typedef unsigned char byte;
+// bool? in c?
 typedef byte bool;
-#define auto __auto_type
-#define var  __auto_type
-#include <unistd.h>
+#define auto /* auto? in c? */ __auto_type
+#define var  /* var? in c? */ __auto_type
 
 // 243 is static data
 // 247 is array
 
-#define cast_index(arr, type, index) ((type *) arr)[ index ]
-#define cast_ptr(arr, type, index)   (&cast_index(arr, type, index))
+#define cast_index(arr, type, index)                                                     \
+    /* This is an index-type-safety macro for my sanity. */ ((type *) arr)[ index ]
+#define cast_ptr(arr, type, index)                                                       \
+    /* This is an index-type-safety macro for my sanity. */ (                            \
+        &cast_index(arr, type, index))
 
-ptr __malloc(u4 size) { return malloc(size); }
+// libc malloc, for the vanilla folk.
+ptr std_malloc(u4 size) { return malloc(size); }
 
+// Better than libc malloc since 2024.
 ptr bettermalloc(u4 size) {
     ptr result;
     while ((result = malloc(size + sizeof(byte))) == 0);
@@ -32,6 +44,7 @@ ptr bettermalloc(u4 size) {
     return &result[ 1 ];
 }
 
+// Better than libc realloc since 2024.
 ptr betterrealloc(ptr original, u4 size) {
     byte *result;
     byte  main_flag = cast_index(original, byte, -1);
@@ -41,7 +54,8 @@ ptr betterrealloc(ptr original, u4 size) {
     return &result[ 1 ];
 }
 
-void __free(ptr x) {
+// Better than libc free since 2024.
+void betterfree(ptr x) {
     ptr pre_x = cast_ptr(x, u4, -2);
     if (cast_index(pre_x, byte, -1) == 247) { // array
         free(cast_ptr(pre_x, byte, -1));
@@ -53,18 +67,20 @@ void __free(ptr x) {
     }
 }
 
+// libc free, for the vanilla folk.
 void std_free(ptr x) { free(x); }
 
-#define malloc(x)     bettermalloc(x)
-#define realloc(x, s) betterrealloc(x, s)
-#define free(x)       __free((ptr) x)
-#define new(type)                                                                        \
+#define malloc(x)     /* Better than libc malloc since 2024. */ bettermalloc(x)
+#define realloc(x, s) /* Better than libc realloc since 2024. */ betterrealloc(x, s)
+#define free(x)       /* Better than libc free since 2024. */ betterfree((ptr) x)
+#define new(type)     /* Allocates some empty space for you! */                          \
     ({                                                                                   \
         byte *__ptr__ = malloc(sizeof(type));                                            \
         __ptr__[ 0 ]  = 0;                                                               \
         (type *) __ptr__;                                                                \
     })
 
+// Creates an array. UNIT is the element size and _COUNT is the element count.
 ptr betterarray(u4 unit, u4 _count) {
     u4  count                     = _count + 1;
     ptr pointer                   = malloc(unit * count + 2 * sizeof(u4));
@@ -75,6 +91,7 @@ ptr betterarray(u4 unit, u4 _count) {
     return &cast_index(pointer, u4, 2);
 }
 
+// 'Eat me' cake.
 ptr grow(ptr _array, u4 inflation) {
     ptr array = cast_ptr(_array, u4, -2);
     u4  unit  = cast_index(array, u4, 0);
@@ -88,9 +105,9 @@ ptr grow(ptr _array, u4 inflation) {
     return &arr2[ 2 ];
 }
 
-#define shrink(array, deflation) grow(array, -(deflation))
+#define shrink(array, deflation) /* 'Drink me' potion. */ grow(array, -(deflation))
 
-#define get(type, array, index)                                                          \
+#define get(type, array, index) /* Safety function with bounds checking. */              \
     (type)({                                                                             \
         if (index >= count(array)) {                                                     \
             printf("ERROR: Index %i out of bounds (%i).\n", index, count(array));        \
@@ -98,7 +115,7 @@ ptr grow(ptr _array, u4 inflation) {
         }                                                                                \
         array[ index ];                                                                  \
     })
-#define set(type, array, index, value)                                                   \
+#define set(type, array, index, value) /* Safety function with bounds-checking. */       \
     ({                                                                                   \
         if (index >= count(array)) {                                                     \
             printf("ERROR: Index %i out of bounds (%i).\n", index, count(array));        \
@@ -106,19 +123,23 @@ ptr grow(ptr _array, u4 inflation) {
         }                                                                                \
         cast_index(array, type, index) = value;                                          \
     })
-#define newarray(unit)     cast_ptr(betterarray(sizeof(unit), 0), unit, 0)
-#define array(unit, count) cast_ptr(betterarray(sizeof(unit), count), unit, 0)
-#define count(arr)         (cast_index(arr, u4, -1) - 1)
-#define unit_size(arr)     cast_index(arr, u4, -2)
-#define last(arr)          arr[ count(arr) - 1 ]
-#define push(arr, item)                                                                  \
+#define newarray(unit) /* Creates a new empty dynamic array. */                          \
+    cast_ptr(betterarray(sizeof(unit), 0), unit, 0)
+#define array(unit, count)                                                               \
+    /* Creates a new dynamic array of type UNIT with COUNT elements. */ cast_ptr(        \
+        betterarray(sizeof(unit), count), unit, 0)
+#define count(arr) /* Counts the number of elements in an array. */                      \
+    (cast_index(arr, u4, -1) - 1)
+#define unit_size(arr)  cast_index(arr, u4, -2)
+#define last(arr)       /* Gets the last element of an array, */ arr[ count(arr) - 1 ]
+#define push(arr, item) /* Pushes a value into an array. */                              \
     ({                                                                                   \
         grow(arr, 1);                                                                    \
         last(arr) = item;                                                                \
     })
-#define pop(arr)                                                                         \
+#define pop(arr) /* Pops a value from an array and returns its value. */                 \
     ({                                                                                   \
-        var output = arr[ count(arr) - 1 ];                                              \
+        var output = last(arr);                                                          \
         shrink(arr, 1);                                                                  \
         output;                                                                          \
     })
@@ -128,24 +149,13 @@ ptr grow(ptr _array, u4 inflation) {
         strcpy(__Data, text);                                                            \
         __Data;                                                                          \
     })
-#define copy_string(text) __copy_string(text, strlen(text))
+#define copy_string(text) /* Copies a string into a separate heap memory slot. */        \
+    __copy_string(text, strlen(text))
 
-void memoryFailure(char *file, int line) {
-    printf(
-        "----------------------------\n"
-        " Memory allocation failure!\n"
-        " At file %s\n"
-        " Line %i\n"
-        "----------------------------\n",
-        file,
-        line);
-    exit(6); // SIGABRT
-}
-
+// String ...? ...!
 typedef char *string;
 
-// #define print(text) printf(text "\n")
-#define format(fmts, ...)                                                                \
+#define format(fmts, ...) /* Very handy! */                                              \
     ({                                                                                   \
         string buf = NULL;                                                               \
         while (asprintf(&buf, fmts, __VA_ARGS__) < 0);                                   \
@@ -156,6 +166,7 @@ typedef char *string;
 
 typedef int pipeout;
 
+// Creates a pipe for you. Water is not included. Batteries also not included.
 string betterpipe() {
     int    pipe_name = rand();
     string real_name = format("/tmp/FIFO_PIPE_%i", pipe_name);
@@ -165,6 +176,7 @@ string betterpipe() {
     return real_name;
 }
 
+// Opens a water pipe to let the river stream flow!
 pipeout open_pipe(string pipe_id) { return open(pipe_id, O_RDWR); }
 
 typedef struct {
@@ -174,6 +186,7 @@ typedef struct {
     pipeout write;
 } stream;
 
+// Creates a river stream for you.
 stream create_stream() {
     string  read_pipe  = betterpipe();
     string  write_pipe = betterpipe();
@@ -185,21 +198,23 @@ stream create_stream() {
     };
 }
 
-void stream_to_station(stream input, string station) {
-    var config_file = fopen(station, "a");
+// Connects your river stream to the central pond.
+void stream_to_pond(stream input, string pond) {
+    var config_file = fopen(pond, "a");
     fprintf(config_file, "%s\n%s\n", input.write_id, input.read_id);
     fclose(config_file);
 }
 
-#define stream() create_stream()
+#define stream() /* Just makes a stream. */ create_stream()
 
-#define stream_and_send(filename)                                                        \
+#define stream_and_send(filename) /* Creates and sends a stream for you. Handy! */       \
     ({                                                                                   \
         var __Output = stream();                                                         \
-        stream_to_station(__Output, filename);                                           \
+        stream_to_pond(__Output, filename);                                              \
         __Output;                                                                        \
     })
 
+// Releases wild and feral data into the deadly stream.
 void bettersend(pipeout fd, ptr data, u4 size) {
     byte mode = 0; // mode 0 is static data and mode 1 is an array
 
@@ -208,6 +223,7 @@ void bettersend(pipeout fd, ptr data, u4 size) {
     write(fd, data, size);        // send actual data
 }
 
+// Reads something from the stream.
 // !! ALLOCATES MEMORY! FREE AFTERWARDS !!
 ptr betterread(pipeout fd) {
     byte mode = 254;
@@ -228,14 +244,17 @@ ptr betterread(pipeout fd) {
 
     return data;
 }
-#define pipe() betterpipe()
-#define send(unit, fd, data)                                                             \
+
+#define pipe()               /* Creates a stream pipe for you to use. */ betterpipe()
+#define send(unit, fd, data) /* Sends DATA of type UNIT to a stream FD. */               \
     ({                                                                                   \
         unit __Data = data;                                                              \
         bettersend(fd.write, &__Data, sizeof(__Data));                                   \
     })
 void __read(int fd, void *buf, size_t size) { read(fd, buf, size); }
-#define read(unit, fd)                                                                   \
+#define read(                                                                            \
+    unit,                                                                                \
+    fd) /* Reads a variable with the type UNIT from the stream FD. No memory leaks. */   \
     ({                                                                                   \
         unit *__Data = betterread(fd.read);                                              \
         unit  _Data  = *__Data;                                                          \
@@ -243,6 +262,13 @@ void __read(int fd, void *buf, size_t size) { read(fd, buf, size); }
         _Data;                                                                           \
     })
 
+#define pcat(a, b) a##b
+#define cat(a, b)  /* Meow? */ pcat(a, b)
+
+#define repeat(x, ...) /* Handy macro for repeating something. */                        \
+    for (var cat(_, __VA_ARGS__) = 0; cat(_, __VA_ARGS__) < (x); cat(_, __VA_ARGS__)++)
+
+// Sends an array through a stream.
 // Does not work with nested pointers.
 void betterarraysend(pipeout fd, ptr array) {
     u4 amount = count(array);
@@ -251,12 +277,13 @@ void betterarraysend(pipeout fd, ptr array) {
     bettersend(fd, &unit, sizeof(u4));
     bettersend(fd, &amount, sizeof(u4));
 
-    for (u8 i = 0; i < (amount * unit); i++) {
+    repeat((amount * unit)) {
         // bettersend(fd, &send_array[i], sizeof(byte)); // inefficient. weak.
-        write(fd, cast_ptr(array, byte, i), sizeof(byte)); // efficient. strong.
+        write(fd, cast_ptr(array, byte, _), sizeof(byte)); // efficient. strong.
     }
 }
 
+// Reads an array thrown into a stream.
 ptr betterarrayread(stream fd) {
     u4 unit   = read(u4, fd);
     u4 amount = read(u4, fd);
@@ -264,17 +291,19 @@ ptr betterarrayread(stream fd) {
 
     ptr arr = betterarray(unit, amount);
 
-    for (u8 i = 0; i < size; i++) { __read(fd.read, cast_ptr(arr, byte, i), 1); }
+    repeat(size) { __read(fd.read, cast_ptr(arr, byte, _), 1); }
 
     return arr;
 }
 
+// Just don't touch this. Thank you!
 #define DONT_TOUCH_MESSAGE                                                               \
     "!DO NOT TOUCH THIS FILE!\n"                                                         \
     "This file is a communication stream, altering its contents will cause programs to " \
     "crash.\n\n"
 #define DONT_TOUCH_MESSAGE_LENGTH 116
 
+// Gets the file size from a file pointer.
 int file_size(FILE *fp) {
     int last_pos = ftell(fp);
     fseek(fp, 0, SEEK_END);
@@ -285,7 +314,10 @@ int file_size(FILE *fp) {
     return end_pos - last_pos;
 }
 
-#define create_station(filename, pipe_name, code)                                        \
+#define create_pond(filename, pipe_name, code)                                           \
+    /* Huge macro. Creates a pond where the river streams will point to. Once a stream   \
+     * connects with the pond, the pond forks itself and runs the code given to          \
+     * it as a child process. */                                                         \
     ({                                                                                   \
         var config_file = fopen(filename, "w");                                          \
         fprintf(config_file, DONT_TOUCH_MESSAGE);                                        \
@@ -319,16 +351,13 @@ int file_size(FILE *fp) {
         }                                                                                \
     })
 
-#define send_array(fd, arr)  betterarraysend(fd.write, arr)
-#define read_array(unit, fd) ((unit *) betterarrayread(fd))
+#define send_array(fd, arr) /* Drops an array into the flow of a given stream.*/         \
+    betterarraysend(fd.write, arr)
+#define read_array(                                                                      \
+    unit, fd) /* Reads an array from a stream with the given element type. */            \
+    ((unit *) betterarrayread(fd))
 
-#define pcat(a, b) a##b
-#define cat(a, b)  pcat(a, b)
-
-#define repeat(x, ...)                                                                   \
-    for (var cat(_, __VA_ARGS__) = 0; cat(_, __VA_ARGS__) < (x); cat(_, __VA_ARGS__)++)
-
-#define expand(x) x
+#define expand(x) /* The use case of this macro is left as an exercise to the reader. */ x
 #define __demon(code, ID)                                                                \
     ({                                                                                   \
         __pid_t cat(fork_, ID) = fork();                                                 \
@@ -341,33 +370,81 @@ int file_size(FILE *fp) {
         };                                                                               \
         cat(fork_, ID);                                                                  \
     })
-#define demon(code) __demon(code, expand(__COUNTER__))
+#define demon(code)    /* Fork the current process and creates an async process that runs  \
+                          in parallel, it also returns the PID of the child process to the \
+                          parent, in case you need to wait until the child dies. */        \
+    __demon(code, expand(__COUNTER__))
 
+// yes = true = 1
 const byte yes = 1;
-const byte no  = 0;
+// no = false = 0
+const byte no = 0;
 
+// Raw, controllable version of the print macro.
 void __print(string input, byte has_color, byte new_line) {
     var len = strlen(input);
 
     var skip = no;
-    for (u4 i = 0; i < len; i++) {
-        if (input[ i ] == 1) skip = yes;
-        if (input[ i ] == 2) skip = no;
+    repeat(len) {
+        if (input[ _ ] == 1) skip = yes;
+        if (input[ _ ] == 2) skip = no;
 
-        if (has_color || !skip) printf("%c", input[ i ]);
+        if (has_color || !skip) printf("%c", input[ _ ]);
     }
 
     if (new_line) printf("\n");
 }
 
+// The raw, not pretty version of the sleep macro. The time in seconds can be a float with
+// any precision.
+void __sleep(float seconds) {
+    var microseconds = (int) (seconds * 1000000);
+
+    usleep(microseconds);
+}
+#define sleep(x)                                                                         \
+    /* Hangs the process for the given amount of seconds. Can be a float. */             \
+    __sleep(x)
+
+// Raw, controllable version of the type macro. The time argument specifies time between
+// each keystroke in seconds.
+void __type(string input, byte has_color, byte new_line, float time) {
+    var len = strlen(input);
+
+    var skip = no;
+    repeat(len) {
+        if (input[ _ ] == 1) skip = yes;
+        if (input[ _ ] == 2) skip = no;
+
+        if (has_color || !skip) {
+            printf("%c", input[ _ ]);
+            fflush(stdout);
+
+            if (input[ _ ] == '\n') sleep(time * 2);
+            else { sleep(time); }
+        }
+    }
+
+    if (new_line) printf("\n");
+}
+
+// Raw, controllable version of the fprint macro.
 void __fprint(string input, byte has_color, byte new_line) {
     __print(input, has_color, new_line);
     free(input);
 }
 
-#define print(x)    __print(x, has_color, yes)
-#define fprint(...) __fprint(format(__VA_ARGS__), has_color, yes)
+#define print(text)    /* Prints text to the console, with a new line, and omits color if \
+                          has_color = no. */                                              \
+    __print(text, has_color, yes)
+#define fprint(...)    /* Prints text to the console using a printf formatting, otherwise \
+                          same as print(text). */                                         \
+    __fprint(format(__VA_ARGS__), has_color, yes)
+#define type(text)    /* Has a typewriter effect and utilizes default_time, otherwise the \
+                         same as print(text). */                                          \
+    __type(text, has_color, yes, default_time)
 
+// Reads a line from stdin. Obviously allocates memory, so free it afterwards.
 string readline() {
     var  input = newarray(char);
     char __init;
@@ -385,8 +462,9 @@ string readline() {
     return input;
 }
 
-#define equal(x, y) (strcmp(x, y) == 0)
+#define equal(x, y) /* Checks the equality of two strings. */ (strcmp(x, y) == 0)
 
+// Turns a string into lowercase by altering the original string.
 void inplace_tolower(string input) {
     repeat(count(input), i) {
         var cur = get(char, input, _i);
@@ -394,23 +472,16 @@ void inplace_tolower(string input) {
     }
 }
 
-void __sleep(float seconds) {
-    var microseconds = (int) (seconds * 1000000);
-
-    usleep(microseconds);
-}
-#define sleep(x) __sleep(x)
-
-#define EXPAND(x, ...) x __VA_ARGS__ __VA_OPT__("")
-#define EXPAND1(x, ...) x EXPAND(__VA_ARGS__)
-#define EXPAND2(x, ...) x EXPAND1(__VA_ARGS__)
-#define EXPAND3(x, ...) x EXPAND2(__VA_ARGS__)
-#define EXPAND4(x, ...) x EXPAND3(__VA_ARGS__)
-#define EXPAND5(x, ...) x EXPAND4(__VA_ARGS__)
-#define EXPAND6(x, ...) x EXPAND5(__VA_ARGS__)
-#define EXPAND7(x, ...) x EXPAND6(__VA_ARGS__)
-#define EXPAND8(x, ...) x EXPAND7(__VA_ARGS__)
-#define EXPAND9(x, ...) x EXPAND8(__VA_ARGS__)
+#define EXPAND(x, ...)   x __VA_ARGS__ __VA_OPT__("")
+#define EXPAND1(x, ...)  x EXPAND(__VA_ARGS__)
+#define EXPAND2(x, ...)  x EXPAND1(__VA_ARGS__)
+#define EXPAND3(x, ...)  x EXPAND2(__VA_ARGS__)
+#define EXPAND4(x, ...)  x EXPAND3(__VA_ARGS__)
+#define EXPAND5(x, ...)  x EXPAND4(__VA_ARGS__)
+#define EXPAND6(x, ...)  x EXPAND5(__VA_ARGS__)
+#define EXPAND7(x, ...)  x EXPAND6(__VA_ARGS__)
+#define EXPAND8(x, ...)  x EXPAND7(__VA_ARGS__)
+#define EXPAND9(x, ...)  x EXPAND8(__VA_ARGS__)
 #define EXPAND10(x, ...) x EXPAND9(__VA_ARGS__)
 #define EXPAND11(x, ...) x EXPAND10(__VA_ARGS__)
 #define EXPAND12(x, ...) x EXPAND11(__VA_ARGS__)
@@ -436,3 +507,68 @@ void __sleep(float seconds) {
 #define EXPAND32(x, ...) x EXPAND31(__VA_ARGS__)
 
 #define reduce(...) EXPAND32(__VA_ARGS__)
+
+ptr get_me() {
+    ptr me;
+    while ((me = dlopen(0, RTLD_LAZY)) == 0);
+
+    return me;
+}
+
+ptr get_dylib(string path) {
+    ptr dylib;
+    while ((dylib = dlopen(path, RTLD_LAZY)) == 0);
+
+    return dylib;
+}
+
+// returns a pointer to a function
+ptr dynamic(ptr me, string name) {
+    var result = dlsym(me, name);
+
+    return result;
+}
+
+// TODO: command(count, ...) macro
+//  Example:
+/*
+
+        _ number of commands
+           _ whether to show possible commands or not. 0 = no, 1 = in help menu, 2 = in
+text command(2, 2, { "get up", stage_main }, { "stay", stage_bed }
+    );
+
+ */
+
+void                          sample_stage(ptr user) {}
+typedef typeof(sample_stage) *stage;
+
+struct command_choice {
+    string name;
+    stage  func_ptr;
+};
+
+#define cmd(name, func)                                                                  \
+    (struct command_choice) { name, func }
+
+enum command_func_options {
+    hide_commands    = 0,
+    commands_in_help = 1,
+    commands_in_text = 2
+};
+
+stage command(enum command_func_options commands_option, u4 length, ...) {
+    va_list cmd_list;
+    va_start(cmd_list, length);
+
+    var cmds = array(struct command_choice, length);
+
+    repeat(length) cmds[ _ ] = va_arg(cmd_list, struct command_choice);
+    va_end(cmd_list);
+
+    var choice = -1;
+
+    while (choice == -1) { var input = readline(); }
+
+    free(cmds);
+}

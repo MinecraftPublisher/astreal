@@ -1,44 +1,25 @@
-#include "color.c"
-#include "comms.c"
-#include "macros.c"
-#include <stdio.h>
-#include <stdlib.h>
+#include "headers/common.h"
+#include <time.h>
 
-byte has_color = yes;
+bool has_color = yes;
 
-const var current_version = 0.11f;
-
-struct game_data {
-    float version;
-    byte  meow_times;
-    byte  has_color;
-    byte passed_help;
-    char  location[ 128 ];
-};
-
-struct game_data new_game() {
-    return (struct game_data) {
-        .version = current_version, .meow_times = 0, .has_color = 0, .location = { 0 }
-    };
-}
-
-void save_data(u8 client_id, struct game_data data) {
+void save_data(u8 client_id, game_data data) {
     var file_name = format("astreal/%li.bin", client_id);
     var fd        = fopen(file_name, "wb");
     free(file_name);
 
-    fwrite(&data, sizeof(struct game_data), 1, fd);
+    fwrite(&data, sizeof(game_data), 1, fd);
     fclose(fd);
 }
 
-struct game_data load_data(u8 client_id) {
-    var data = new (struct game_data);
+game_data load_data(u8 client_id) {
+    var data = new (game_data);
 
     var file_name = format("astreal/%li.bin", client_id);
     var fd        = fopen(file_name, "rb");
     free(file_name);
 
-    fread(data, sizeof(struct game_data), 1, fd);
+    fread(data, sizeof(game_data), 1, fd);
 
     var _data = *data;
     free(data);
@@ -58,6 +39,7 @@ bool exists(string fname) {
 int main() {
     print("Starting Astreal shell...");
     srand(time(0));
+    var me = get_dylib("build/stages.so");
 
     print("Attempting to communicate with Astreal CDS...");
     var cds_stream = stream_and_send("/tmp/cds_pipes.txt");
@@ -81,9 +63,7 @@ int main() {
     while (1) {
         var session_id = "";
         __print(
-            cBLK("Enter a session ID if you have one, or just press enter: "),
-            has_color,
-            no);
+            "Enter a session ID if you have one, or just press enter: ", has_color, no);
         fflush(stdout);
 
         session_id = readline();
@@ -103,16 +83,19 @@ int main() {
             var sid = atoll(session_id);
             game    = load_data(sid);
             cds_id  = sid;
-            fprint("Loading game data from session ID " cBYEL("%lli") ".\n", sid);
-            free(session_id);
+            fprint("Loading game data from session ID " cBWHT("%lli") ".\n", sid);
             free(session_path);
+            free(session_id);
             break;
         }
 
         print(cRED("Invalid session ID!"));
-        free(session_id);
         free(session_path);
+        free(session_id);
     }
+
+    printf("\x1b"
+           "c");
 
     send(byte, cds_stream, MSG_CHANGE_SID);
     send(long, cds_stream, cds_id);
@@ -132,22 +115,11 @@ int main() {
         var location = "main";
 
         __fprint(
-            format(MAG "%li " BLK "%s " BGRN "$ " RESET, cds_id, location),
+            format(MAG "%li " BWHT "%s " BGRN "$ " RESET, cds_id, location),
             has_color,
             no);
         fflush(stdout);
-        var input = readline();
-        var i     = 0;
-
-        var original_command = newarray(char);
-
-        char cur;
-        while (i < count(input) && (cur = get(char, input, i)) != ' ') {
-            push(original_command, cur);
-            i++;
-        }
-
-        var command = copy_string(original_command);
+        var command = readline();
         inplace_tolower(command);
 
         if (equal(command, "meow")) {
@@ -209,31 +181,31 @@ int main() {
                 cBRED("look <object>") "\nor ",
                 cBRED("look <north/east/west/south>") "."));
             sleep(2);
-            print("Use the help command in different places when you're clueless on what to do.");
+            print("\nUse the help command in different places when you're clueless on "
+                  "what to do.");
             sleep(2);
-            print("Use the " cBYEL("begin") " command to start your journey!");
+            print("\nUse the " cBYEL("begin") " command to start your journey!\n");
             sleep(1);
             game.passed_help = yes;
         }
 
-        else if(equal(command, "begin") && game.passed_help) {
+        // add this back in later
+        else if (equal(command, "begin") /* && game.passed_help */) {
             print("Welcome to Atrola!");
             sleep(0.5);
-            // TODO: scene("main_apartment");
+            $run("intro");
         }
 
         else {
-            fprint(cRED("Error!") " Unknown command \"%s\".", original_command);
+            fprint(cRED("Error!") " Unknown command \"%s\".", command);
         }
 
         send(byte, cds_stream, MSG_LOG);
-        var log = format("Invoked command \"%s\".\n", input);
+        var log = format("Invoked command \"%s\".\n", command);
 
         send_array(cds_stream, log);
 
         free(log);
-        free(input);
         free(command);
-        free(original_command);
     }
 }
