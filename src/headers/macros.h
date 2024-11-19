@@ -579,7 +579,7 @@ stage command(
     va_start(cmd_list, length);
 
     var cmds               = array(struct command_choice, length + 1);
-    var available_commands = copy_string("Available commands:\n[HELP]\n");
+    var available_commands = copy_string("Available commands:\n[HELP]");
 
     repeat(length) {
         cmds[ _ ]      = va_arg(cmd_list, struct command_choice);
@@ -603,10 +603,10 @@ stage command(
     printf("\n");
     if (commands_option == commands_in_text) type(available_commands);
 
-    printf("\n> ");
-    fflush(stdout);
-
     while (choice == (ptr) -1) {
+        printf("\n> ");
+        fflush(stdout);
+        
         var input = readline();
         inplace_tolower(input);
 
@@ -625,9 +625,9 @@ stage command(
         if (equal(input, "help")) {
             printf("%s\n", help_text);
             if (commands_option != hide_commands) type(available_commands);
-        }
+        } else
+            __print("Invalid command!", no, yes);
 
-        __print("Invalid command!", no, yes);
         free(input);
     }
 
