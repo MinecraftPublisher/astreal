@@ -1,4 +1,5 @@
 #include "headers/common.h"
+#include <stdio.h>
 #include <time.h>
 
 bool has_color = yes;
@@ -122,6 +123,13 @@ int main() {
         var command = readline();
         inplace_tolower(command);
 
+        send(byte, cds_stream, MSG_LOG);
+        var log = format("Invoked command \"%s\".\n", command);
+
+        send_array(cds_stream, log);
+
+        free(log);
+
         if (equal(command, "meow")) {
             if (game.meow_times == 0) {
                 print("Hello there! Didn't know cats could play this game.");
@@ -191,6 +199,9 @@ int main() {
 
         // add this back in later
         else if (equal(command, "begin") /* && game.passed_help */) {
+            printf("\x1b"
+                   "c");
+            fflush(stdout);
             print("Welcome to Atrola!");
             sleep(0.5);
             $run("intro");
@@ -200,12 +211,6 @@ int main() {
             fprint(cRED("Error!") " Unknown command \"%s\".", command);
         }
 
-        send(byte, cds_stream, MSG_LOG);
-        var log = format("Invoked command \"%s\".\n", command);
-
-        send_array(cds_stream, log);
-
-        free(log);
         free(command);
     }
 }

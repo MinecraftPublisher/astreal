@@ -1,6 +1,7 @@
 #pragma once
 
 // Ooh. Massive.
+#include "color.h"
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -314,6 +315,25 @@ int file_size(FILE *fp) {
     return end_pos - last_pos;
 }
 
+#define expand(x) /* The use case of this macro is left as an exercise to the reader. */ x
+#define __demon(code, ID)                                                                \
+    ({                                                                                   \
+        __pid_t cat(fork_, ID) = fork();                                                 \
+        if (cat(fork_, ID) < 0) {                                                        \
+            perror("Failed to fork!");                                                   \
+            exit(1);                                                                     \
+        } else if (cat(fork_, ID) == 0) {                                                \
+            code;                                                                        \
+            exit(0);                                                                     \
+        };                                                                               \
+        cat(fork_, ID);                                                                  \
+    })
+#define demon(code)    /* Fork the current process and creates an async process that runs  \
+                          in parallel, it also returns the PID of the child process to the \
+                          parent, in case you need to wait until the child dies. */        \
+    __demon(code, expand(__COUNTER__))
+#define watch(pid) /* Waits for your child to die. */ waitpid(pid, NULL, 0)
+
 #define create_pond(filename, pipe_name, code)                                           \
     /* Huge macro. Creates a pond where the river streams will point to. Once a stream   \
      * connects with the pond, the pond forks itself and runs the code given to          \
@@ -357,28 +377,12 @@ int file_size(FILE *fp) {
     unit, fd) /* Reads an array from a stream with the given element type. */            \
     ((unit *) betterarrayread(fd))
 
-#define expand(x) /* The use case of this macro is left as an exercise to the reader. */ x
-#define __demon(code, ID)                                                                \
-    ({                                                                                   \
-        __pid_t cat(fork_, ID) = fork();                                                 \
-        if (cat(fork_, ID) < 0) {                                                        \
-            perror("Failed to fork!");                                                   \
-            exit(1);                                                                     \
-        } else if (cat(fork_, ID) == 0) {                                                \
-            code;                                                                        \
-            exit(0);                                                                     \
-        };                                                                               \
-        cat(fork_, ID);                                                                  \
-    })
-#define demon(code)    /* Fork the current process and creates an async process that runs  \
-                          in parallel, it also returns the PID of the child process to the \
-                          parent, in case you need to wait until the child dies. */        \
-    __demon(code, expand(__COUNTER__))
-
 // yes = true = 1
 const byte yes = 1;
 // no = false = 0
 const byte no = 0;
+// null = ((ptr)0)
+const ptr null = 0;
 
 // Raw, controllable version of the print macro.
 void __print(string input, byte has_color, byte new_line) {
@@ -409,18 +413,22 @@ void __sleep(float seconds) {
 // Raw, controllable version of the type macro. The time argument specifies time between
 // each keystroke in seconds.
 void __type(string input, byte has_color, byte new_line, float time) {
-    var len = strlen(input);
-
     var skip = no;
-    repeat(len) {
-        if (input[ _ ] == 1) skip = yes;
-        if (input[ _ ] == 2) skip = no;
+
+    repeat(strlen(input)) {
+        var cur = input[ _ ];
+        if (cur == 1) skip = yes;
+        if (cur == 2) skip = no;
 
         if (has_color || !skip) {
-            printf("%c", input[ _ ]);
+            if (cur == '\5') {
+                sleep(time * 3);
+                continue;
+            }
+            printf("%c", cur);
             fflush(stdout);
 
-            if (input[ _ ] == '\n') sleep(time * 2);
+            if (cur == '\n') sleep(time * 2);
             else { sleep(time); }
         }
     }
@@ -554,11 +562,12 @@ typedef typeof(sample_stage) *stage;
 
 struct command_choice {
     string name;
+    string description;
     stage  func_ptr;
 };
 
-#define cmd(name, func) /* less keystrokes! */                                           \
-    (struct command_choice) { name, (stage) func }
+#define cmd(name, desc, func) /* less keystrokes! */                                     \
+    (struct command_choice) { name, desc, (stage) func }
 
 enum command_func_options {
     hide_commands    = 0,
@@ -574,12 +583,18 @@ command(2, 2, { "get up", stage_main }, { "stay", stage_bed }
 
  */
 stage command(
-    enum command_func_options commands_option, string help_text, u4 length, ...) {
+    enum command_func_options commands_option,
+    string                    help_text,
+    bool                      has_color,
+    float                     default_time,
+    u4                        length,
+    ...) {
     va_list cmd_list;
     va_start(cmd_list, length);
 
-    var cmds               = array(struct command_choice, length + 1);
-    var available_commands = copy_string("Available commands:\n[HELP]");
+    var cmds = array(struct command_choice, length + 1);
+    var available_commands
+        = copy_string(cBGRN("Available commands:\n") cHYEL("[") "HELP" cHYEL("]"));
 
     repeat(length) {
         cmds[ _ ]      = va_arg(cmd_list, struct command_choice);
@@ -587,16 +602,14 @@ stage command(
         inplace_toupper(cmds[ _ ].name);
 
         var old_coms       = available_commands;
-        available_commands = format("%s\n[%s]", available_commands, cmds[ _ ].name);
+        available_commands = format(
+            "%s\n" cHYEL("[") "%s" cHYEL("]"), available_commands, cmds[ _ ].name);
         free(old_coms);
 
         inplace_tolower(cmds[ _ ].name);
     }
 
     va_end(cmd_list);
-
-    var default_time = 0.05f;
-    var has_color    = no;
 
     var choice = (ptr) -1;
 
@@ -606,13 +619,17 @@ stage command(
     while (choice == (ptr) -1) {
         printf("\n> ");
         fflush(stdout);
-        
+
         var input = readline();
         inplace_tolower(input);
 
         repeat(length) {
             if (equal(input, cmds[ _ ].name)) {
                 choice = cmds[ _ ].func_ptr;
+                if (cmds[ _ ].description != null) {
+                    type("");
+                    type(cmds[ _ ].description);
+                }
                 break;
             }
         }
@@ -623,10 +640,17 @@ stage command(
         }
 
         if (equal(input, "help")) {
-            printf("%s\n", help_text);
+            var format_text = help_text == null
+                                  ? commands_option == hide_commands
+                                        ? "No help text provided. You're on your own."
+                                        : "There is no help text available right now."
+                                  : help_text;
+            type(format_text);
+            type("\n");
+            sleep(0.25);
             if (commands_option != hide_commands) type(available_commands);
         } else
-            __print("Invalid command!", no, yes);
+            __print("I don't understand.", no, yes);
 
         free(input);
     }
@@ -635,4 +659,29 @@ stage command(
     free(available_commands);
 
     return choice;
+}
+
+typedef struct game_data {
+    float version;
+    byte  meow_times;
+    bool  has_color;
+    bool  passed_help;
+    // bool  apartment_entered;
+    u4   items[ 16 ];
+    char location[ 128 ];
+} game_data;
+
+enum ITEMS {
+    TORN_CLOTHES = 1
+};
+
+var item_names = (string[]){ "Torn clothes" };
+
+void add_to_inventory(game_data *game, u4 item_index) {
+    repeat(16) {
+        if(game->items[_] == 0) {
+            game->items[_] = item_index;
+            break;
+        }
+    }
 }
