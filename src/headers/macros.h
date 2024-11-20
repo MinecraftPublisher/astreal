@@ -8,7 +8,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/signal.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 // void pointer my beloved!
@@ -545,6 +548,31 @@ ptr dynamic(ptr me, string name) {
     return result;
 }
 
+#define stage(name) void cat(stage_, name)(game_data * user)
+
+void sample_stage(ptr user) {}
+// function pointer? in c?
+typedef typeof(sample_stage) *stage;
+
+struct game_data;
+
+void transfer(string name, struct game_data *data) {
+    var stages   = get_dylib("build/stages.so");
+    var new_name = format("stage_%s", name);
+    var function = (stage) dynamic(stages, new_name);
+    free(new_name);
+
+    if (function == null) {
+        bool has_color = yes;
+        fprint(cBHRED("ERROR!") " unknown transfer target: " cBHYEL("%s") ".", name);
+        exit(1);
+    }
+
+    function(data);
+
+    dlclose(stages);
+}
+
 // TODO: command(count, ...) macro
 //  Example:
 /*
@@ -555,10 +583,6 @@ text command(2, 2, { "get up", stage_main }, { "stay", stage_bed }
     );
 
  */
-
-void sample_stage(ptr user) {}
-// function pointer? in c?
-typedef typeof(sample_stage) *stage;
 
 struct command_choice {
     string name;
@@ -575,6 +599,16 @@ enum command_func_options {
     commands_in_text = 2
 };
 
+float default_time = 0.02f;
+
+#define command(options, help_text, ...)                                                 \
+    ({                                                                                   \
+        struct command_choice _options[] = { __VA_ARGS__ };                              \
+        u4 choice_length = sizeof(_options) / sizeof(struct command_choice);             \
+        __command(                                                                       \
+            options, help_text, has_color, default_time, choice_length, __VA_ARGS__);    \
+    })
+
 /*
 
 0: number of commands, 1: whether to show possible commands or not.
@@ -582,7 +616,7 @@ command(2, 2, { "get up", stage_main }, { "stay", stage_bed }
     );
 
  */
-stage command(
+stage __command(
     enum command_func_options commands_option,
     string                    help_text,
     bool                      has_color,
@@ -663,6 +697,7 @@ stage command(
 
 typedef struct game_data {
     float version;
+    u4    time;
     byte  meow_times;
     bool  has_color;
     bool  passed_help;
@@ -671,17 +706,36 @@ typedef struct game_data {
     char location[ 128 ];
 } game_data;
 
-enum ITEMS {
-    TORN_CLOTHES = 1
-};
+enum ITEMS { TORN_CLOTHES = 1 };
 
-var item_names = (string[]){ "Torn clothes" };
+var item_names = (string[]) { "Torn clothes" };
 
 void add_to_inventory(game_data *game, u4 item_index) {
     repeat(16) {
-        if(game->items[_] == 0) {
-            game->items[_] = item_index;
+        if (game->items[ _ ] == 0) {
+            game->items[ _ ] = item_index;
             break;
         }
     }
+}
+
+// the MMAPed seed for the random number generator.
+var *rng_seed = (u4 *) null;
+
+#define $seed() /* seeds a child-safe random number generator. */                        \
+    rng_seed = mmap(                                                                     \
+        NULL, sizeof(u4), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)
+
+// taken off a github gist about mullbery32. the numbers are random enough for me, i don't
+// need them for security or cryptography or anything.
+int $rng() {
+    var z = (*rng_seed += 0x9e3779b9);
+
+    z ^= z >> 16;
+    z *= 0x21f0aaad;
+    z ^= z >> 15;
+    z *= 0x735a2d97;
+    z ^= z >> 15;
+
+    return z;
 }

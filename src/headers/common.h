@@ -4,10 +4,11 @@
 #include "comms.h"
 #include "macros.h"
 
-const var current_version = 0.12;
+const var current_version = 0.13;
 
 game_data new_game() {
     return (game_data) { .version     = current_version,
+                         .time        = 0,
                          .meow_times  = 0,
                          .has_color   = yes,
                          .location    = "main",

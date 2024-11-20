@@ -20,7 +20,7 @@ run_shell:
 	build/shell
 
 stages:
-	clang -shared -fPIC src/stages/*.c -o build/stages.so
+	clang -shared -fPIC src/stages/stages.c -o build/stages.so
 
 count:
 	@echo

@@ -39,8 +39,7 @@ bool exists(string fname) {
 
 int main() {
     print("Starting Astreal shell...");
-    srand(time(0));
-    var me = get_dylib("build/stages.so");
+    $seed();
 
     print("Attempting to communicate with Astreal CDS...");
     var cds_stream = stream_and_send("/tmp/cds_pipes.txt");
@@ -60,6 +59,8 @@ int main() {
            "c");
 
     var game = new_game();
+
+    goto CUT_THE_BULLSHIT;
 
     while (1) {
         var session_id = "";
@@ -204,7 +205,11 @@ int main() {
             fflush(stdout);
             print("Welcome to Atrola!");
             sleep(0.5);
-            $run("intro");
+            CUT_THE_BULLSHIT:
+            transfer("apartment", &game);
+
+            print("Game test completed, remove this later");
+            exit(0);
         }
 
         else {

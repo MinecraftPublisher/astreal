@@ -2,7 +2,7 @@
 #include <time.h>
 
 int main() {
-    srand(time(0));
+    $seed();
 
     // listen for new clients
 
@@ -13,7 +13,8 @@ int main() {
     fflush(stdout);
 
     create_pond("/tmp/cds_pipes.txt", client, {
-        var client_id = random();
+        var client_id = $rng();
+        printf("%i\n", rng_seed);
 
         printf("New client ID assigned as " cBYEL("%li") ".\n" RESET, client_id);
 
