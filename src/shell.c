@@ -1,6 +1,6 @@
 #include "headers/common.h"
+#include "headers/macros.h"
 #include <stdio.h>
-#include <time.h>
 
 bool has_color = yes;
 
@@ -37,24 +37,28 @@ bool exists(string fname) {
     return 0;
 }
 
-int main() {
+int main(int argc, string *argv) {
+    if(top_of_stack == NULL) top_of_stack = &argc;
+
     print("Starting Astreal shell...");
     $seed();
 
-    print("Attempting to communicate with Astreal CDS...");
-    var cds_stream = stream_and_send("/tmp/cds_pipes.txt");
+    var cds_id = (long)$rng() * (long)$rng();
 
-    print("Waiting for a connection signal from CDS...");
-    var cds_response = read(byte, cds_stream);
+    // print("Attempting to communicate with Astreal CDS...");
+    // var cds_stream = stream_and_send("/tmp/cds_pipes.txt");
 
-    if (cds_response != MSG_CONNECT_SUCCESS) {
-        printf("Failed to connect to CDS server: Invalid response. %i\n", cds_response);
-        exit(1);
-    }
+    // print("Waiting for a connection signal from CDS...");
+    // var cds_response = read(byte, cds_stream);
 
-    var cds_id = read(long, cds_stream);
+    // if (cds_response != MSG_CONNECT_SUCCESS) {
+        // printf("Failed to connect to CDS server: Invalid response. %i\n", cds_response);
+        // exit(1);
+    // }
 
-    print("Connection succeeded! Welcome to Astreal.");
+    // var cds_id = read(long, cds_stream);
+
+    // print("Connection succeeded! Welcome to Astreal.");
     printf("\x1b"
            "c");
 
@@ -85,7 +89,7 @@ int main() {
             var sid = atoll(session_id);
             game    = load_data(sid);
             cds_id  = sid;
-            fprint("Loading game data from session ID " cBWHT("%lli") ".\n", sid);
+            print("Loading game data from session ID " cBWHT("%lli") ".\n", sid);
             free(session_path);
             free(session_id);
             break;
@@ -99,10 +103,10 @@ int main() {
     printf("\x1b"
            "c");
 
-    send(byte, cds_stream, MSG_CHANGE_SID);
-    send(long, cds_stream, cds_id);
+    // send(byte, cds_stream, MSG_CHANGE_SID);
+    // send(long, cds_stream, cds_id);
 
-    fprint(
+    print(
         reduce(
             "Welcome to " cBRED("Astreal") ".\n",
             "Your client ID is: " cYEL("%li") "\n",
@@ -116,20 +120,17 @@ int main() {
 
         var location = "main";
 
-        __fprint(
-            format(MAG "%li " BWHT "%s " BGRN "$ " RESET, cds_id, location),
-            has_color,
-            no);
+        print(MAG "%li " BWHT "%s " BGRN "$ " RESET, cds_id, location);
         fflush(stdout);
         var command = readline();
         inplace_tolower(command);
 
-        send(byte, cds_stream, MSG_LOG);
-        var log = format("Invoked command \"%s\".\n", command);
+        // send(byte, cds_stream, MSG_LOG);
+        // var log = format("Invoked command \"%s\".\n", command);
 
-        send_array(cds_stream, log);
+        // send_array(cds_stream, log);
 
-        free(log);
+        // free(log);
 
         if (equal(command, "meow")) {
             if (game.meow_times == 0) {
@@ -206,14 +207,14 @@ int main() {
             print("Welcome to Atrola!");
             sleep(0.5);
             CUT_THE_BULLSHIT:
-            transfer("apartment", &game);
+            transfer("intro", &game);
 
             print("Game test completed, remove this later");
             exit(0);
         }
 
         else {
-            fprint(cRED("Error!") " Unknown command \"%s\".", command);
+            print(cRED("Error!") " Unknown command \"%s\".", command);
         }
 
         free(command);

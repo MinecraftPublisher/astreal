@@ -1,4 +1,4 @@
-all: clean cds shell stages count
+all: clean shell stages count
 
 clean:
 	rm -rf build/
@@ -6,14 +6,14 @@ clean:
 	rm -rf astreal/
 	mkdir astreal/
 
-cds:
-	clang -rdynamic src/cds.c -o build/cds
+# cds:
+# 	clang -g -rdynamic src/cds.c -o build/cds
 
 shell:
-	clang -rdynamic src/shell.c -o build/shell
+	clang -g -rdynamic src/shell.c -o build/shell
 
-run_cds:
-	build/cds
+# run_cds:
+#	build/cds
 
 run_shell:
 	sleep 0.2

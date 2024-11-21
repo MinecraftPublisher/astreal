@@ -6,13 +6,9 @@ unsigned char has_color = 1;
 #include <sys/wait.h>
 
 int main() {
-    var new_baby = demon({
-        print("I am a lil gremlin");
-        sleep(0.5);
-    });
-
-    print("My lil gremlin is running");
-    watch(new_baby);
-    print("MY BABY IS DEAD");
+    printf("%p\n", "Hello");
+    printf("%p\n", copy_string("Hello"));
+    var i = 2;
+    printf("%p\n", &i);
 }
 

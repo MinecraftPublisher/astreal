@@ -3,8 +3,10 @@
 // Ooh. Massive.
 #include "color.h"
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +14,8 @@
 #include <sys/signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 // void pointer my beloved!
@@ -39,11 +43,240 @@ typedef byte bool;
 // libc malloc, for the vanilla folk.
 ptr std_malloc(u4 size) { return malloc(size); }
 
+#define expand(x) /* The use case of this macro is left as an exercise to the reader. */ x
+#define __demon(code, ID)                                                                \
+    ({                                                                                   \
+        __pid_t cat(fork_, ID) = fork();                                                 \
+        if (cat(fork_, ID) < 0) {                                                        \
+            perror("Failed to fork!");                                                   \
+            exit(1);                                                                     \
+        } else if (cat(fork_, ID) == 0) {                                                \
+            code;                                                                        \
+            exit(0);                                                                     \
+        };                                                                               \
+        cat(fork_, ID);                                                                  \
+    })
+#define demon(code)    /* Fork the current process and creates an async process that runs  \
+                          in parallel, it also returns the PID of the child process to the \
+                          parent, in case you need to wait until the child dies. */        \
+    __demon(code, expand(__COUNTER__))
+
+#define pcat(a, b) a##b
+#define cat(a, b)  /* Meow? */ pcat(a, b)
+
+struct leak_db {
+    byte   leaked;
+    ptr    memory;
+    ptr    backtrace[ 32 ];
+    char **symbols;
+};
+
+var leak_db      = (struct leak_db[ 4096 ]) {};
+var leak_ptr     = 0;
+var top_of_stack = NULL;
+
+bool mine(ptr pointer) {
+    bool *glob_var = mmap(
+        NULL, sizeof(bool), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+    var pid = demon({
+        *glob_var  = 0;
+        byte *x    = pointer;
+        byte  data = *x;
+        *glob_var  = 1;
+    });
+
+    wait(NULL);
+    bool output = *glob_var;
+
+    munmap(glob_var, sizeof(bool));
+
+    return output;
+}
+
+ptr betterarray(u4 unit, u4 _count);
+
+void final_free(ptr x) {
+    // printf("Freeing memory " cHRED("%p") "\n", x);
+
+    for (int i = 0; i < leak_ptr; i++) {
+        if (leak_db[ i ].memory == x) leak_db[ i ].leaked = 0;
+    }
+
+    free(x);
+}
+
+// Better than libc free since 2024.
+void betterfree(ptr x) {
+    if (x == 0) return;
+
+    var heap_check    = malloc(1);
+    var __stack_check = 2;
+    var stack_check   = (ptr) &__stack_check;
+    var data_check    = (ptr) "";
+
+    // This is a cheap hack. It's in no way reliable.
+    var heap_dist = heap_check - x;
+    if (heap_dist < 0) heap_dist = -heap_dist;
+    var data_dist = data_check - x;
+    if (data_dist < 0) data_dist = -data_dist;
+    var stack_dist = stack_check - x;
+    if (stack_dist < 0) stack_dist = -stack_dist;
+
+    var is_heap = heap_dist < data_dist && heap_dist < stack_dist;
+
+    if (!is_heap) {
+        free(heap_check);
+        return;
+    }
+
+    ptr pre_x = cast_ptr(x, u4, -2);
+    if (cast_index(pre_x, byte, -1) == 247) { // array
+        final_free(cast_ptr(pre_x, byte, -1));
+    } else if (cast_index(x, byte, -1) == 243) {
+        final_free(cast_ptr(x, byte, -1));
+    } else {
+        final_free(x);
+    }
+
+    free(heap_check);
+}
+
+#define SEC_TO_US(sec) ((sec) * 1000000)
+#define NS_TO_US(ns)   ((ns) / 1000)
+uint64_t micros() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    uint64_t us = SEC_TO_US((uint64_t) ts.tv_sec) + NS_TO_US((uint64_t) ts.tv_nsec);
+    return us;
+}
+
+void check_for_leaks(bool silent) {
+    var start_time = micros();
+
+    var _bottom = 25;
+    var bottom  = (ptr) &_bottom;
+
+    var number_freed = 0;
+
+    var start = bottom > top_of_stack ? top_of_stack : bottom;
+    var end   = bottom > top_of_stack ? bottom : top_of_stack;
+
+    var accessible = (bool *) malloc(sizeof(bool) * (leak_ptr + 1));
+
+    for (long i = (long) start; i < (long) end; i++) {
+        var _cur = (ptr) i;
+
+        if (mine(_cur)) {
+            var cur = *(ptr *) _cur;
+
+            for (int j = 0; j < leak_ptr; j++) {
+                var diff = leak_db[ j ].memory - cur;
+                if (diff < 0) diff = -diff;
+
+                // printf("%p %p %li\n", cur, leak_db[ j ].memory, diff);
+
+                if (leak_db[ j ].leaked) {
+                    if (diff == (sizeof(u4) * 2 + sizeof(byte)) || diff == 0
+                        || diff == sizeof(byte))
+                        accessible[ j ] = 1;
+                    else
+                        accessible[ j ] = 0;
+                }
+            }
+        }
+    }
+
+    var accessible_tally = 0;
+    for (long i = 0; i <= leak_ptr; i++) {
+        if (accessible[ i ] != 0) accessible_tally++;
+    }
+
+    for (int i = 0; i <= leak_ptr; i++) number_freed += 1 - leak_db[ i ].leaked;
+
+    if (!silent) {
+        printf(
+            "-- Memory leak summary:\nTop of stack: %p\nBottom of stack: %p\nStack size: "
+            "%li\nTotal "
+            "allocations: "
+            "%i\nFreed: %i\nAccessible: %i\nLeaked: %i\n\n",
+            top_of_stack,
+            bottom,
+            end - start,
+            leak_ptr + 1,
+            number_freed,
+            accessible_tally,
+            leak_ptr + 1 - number_freed - accessible_tally);
+    }
+
+    for (int i = 0; i < leak_ptr; i++) {
+        if (leak_db[ i ].leaked && mine(leak_db[ i ].memory)) {
+            var is_accessible = 0;
+
+            for (long j = (long) start; j < (long) end; j++) {
+                if ((ptr) j == leak_db[ i ].memory) {
+                    is_accessible = 1;
+                    break;
+                }
+            }
+
+            if (!is_accessible) { betterfree(leak_db[ i ].memory); }
+        }
+    }
+
+    if (!silent) {
+        for (int i = 0; i < leak_ptr; i++) {
+            if (leak_db[ i ].leaked && mine(leak_db[ i ].memory)) {
+                var is_accessible = 0;
+
+                for (long j = (long) start; j < (long) end; j++) {
+                    if ((ptr) j == leak_db[ i ].memory) {
+                        is_accessible = 1;
+                        break;
+                    }
+                }
+
+                if (!is_accessible) {
+                    printf("Leaked memory: %p\n", leak_db[ i ].memory);
+
+                    var strings = leak_db[ i ].symbols;
+
+                    printf("Backtrace:\n");
+
+                    if (strings != 0) {
+                        for (int x = 0; x < 32; x++) {
+                            if (strcmp("[(nil)]", strings[ x ]) != 0) {
+                                printf(" - %s\n", strings[ x ]);
+                            }
+                        }
+                    }
+
+                    printf("\n");
+                    // free(strings);
+                }
+            }
+        }
+    }
+
+    free(accessible);
+    var end_time = micros();
+
+    if (!silent) { printf("Time elapsed: %lius\n", end_time - start_time); }
+}
+
 // Better than libc malloc since 2024.
 ptr bettermalloc(u4 size) {
     ptr result;
     while ((result = malloc(size + sizeof(byte))) == 0);
     cast_index(result, byte, 0) = 243;
+
+    var bt_array = malloc(sizeof(ptr) * 32);
+    backtrace(bt_array, 32);
+    leak_db[ leak_ptr++ ]
+        = (struct leak_db) { .leaked    = 1,
+                             .memory    = result,
+                             .backtrace = bt_array,
+                             .symbols   = backtrace_symbols(bt_array, 32) };
 
     return &result[ 1 ];
 }
@@ -55,29 +288,29 @@ ptr betterrealloc(ptr original, u4 size) {
     while ((result = realloc(cast_ptr(original, byte, -1), size + sizeof(byte))) == 0);
     result[ 0 ] = main_flag;
 
+    for (int i = 0; i < leak_ptr; i++) {
+        if (leak_db[ i ].memory == original) leak_db[ i ].leaked = 0;
+    }
+
+    var bt_array = malloc(sizeof(ptr) * 32);
+    backtrace(bt_array, 32);
+    leak_db[ leak_ptr++ ]
+        = (struct leak_db) { .leaked    = 1,
+                             .memory    = result,
+                             .backtrace = bt_array,
+                             .symbols   = backtrace_symbols(bt_array, 32) };
+
     return &result[ 1 ];
 }
 
-// Better than libc free since 2024.
-void betterfree(ptr x) {
-    ptr pre_x = cast_ptr(x, u4, -2);
-    if (cast_index(pre_x, byte, -1) == 247) { // array
-        free(cast_ptr(pre_x, byte, -1));
-    } else if (cast_index(x, byte, -1) == 243) {
-        free(cast_ptr(x, byte, -1));
-    } else {
-        printf("Warn: not freeing normal memory %p\n", x);
-        // exit(1);
-    }
-}
-
-// libc free, for the vanilla folk.
-void std_free(ptr x) { free(x); }
-
 #define malloc(x)     /* Better than libc malloc since 2024. */ bettermalloc(x)
 #define realloc(x, s) /* Better than libc realloc since 2024. */ betterrealloc(x, s)
-#define free(x)       /* Better than libc free since 2024. */ betterfree((ptr) x)
-#define new(type)     /* Allocates some empty space for you! */                          \
+
+// libc free, for the vanilla folk.
+// void std_free(ptr x) { free(x); }
+
+#define free(x)   /* Better than libc free since 2024. */ betterfree((ptr) x)
+#define new(type) /* Allocates some empty space for you! */                              \
     ({                                                                                   \
         byte *__ptr__ = malloc(sizeof(type));                                            \
         __ptr__[ 0 ]  = 0;                                                               \
@@ -155,6 +388,44 @@ ptr grow(ptr _array, u4 inflation) {
     })
 #define copy_string(text) /* Copies a string into a separate heap memory slot. */        \
     __copy_string(text, strlen(text))
+// #define frame()                                                                          \
+//     var top_of_stack  = 25;                                                              \
+//     var current_frame = newarray(ptr)
+
+// void __unframe(ptr __top_of_stack, ptr *heap_frame) {
+//     var __bottom_of_stack = 25;
+//     var bottom_of_stack   = (ptr) &__bottom_of_stack;
+
+//     var top_of_stack = __top_of_stack;
+
+//     if (bottom_of_stack > top_of_stack) {
+//         var inter       = bottom_of_stack;
+//         bottom_of_stack = top_of_stack;
+//         top_of_stack    = inter;
+//     }
+
+//     for (var j = 0; j < count(heap_frame); j++) {
+//         if (heap_frame[ j ] == 0) continue;
+
+//         var should_delete = 1;
+
+//         for (var i = (long) bottom_of_stack; i < (long) top_of_stack; i++) {
+//             if((ptr)(bottom_of_stack + i) == heap_frame[j]) {
+//                 should_delete = 0;
+//                 break;
+//             }
+//         }
+
+//         if(should_delete) {
+//             printf("Freed memory %p\n", heap_frame[j]);
+//             free(heap_frame[j]);
+//         }
+//     }
+
+//     free(heap_frame);
+// }
+
+// #define unframe() __unframe(&top_of_stack, current_frame)
 
 // String ...? ...!
 typedef char *string;
@@ -162,13 +433,13 @@ typedef char *string;
 #define format(fmts, ...) /* Very handy! */                                              \
     ({                                                                                   \
         string buf = NULL;                                                               \
-        while (asprintf(&buf, fmts, __VA_ARGS__) < 0);                                   \
+        while (asprintf(&buf, fmts __VA_OPT__(, ) __VA_ARGS__) < 0);                     \
         string output = copy_string(buf);                                                \
-        std_free(buf);                                                                   \
+        free(buf);                                                                       \
         output;                                                                          \
     })
 
-typedef int pipeout;
+typedef long pipeout;
 
 // Creates a pipe for you. Water is not included. Batteries also not included.
 string betterpipe() {
@@ -266,9 +537,6 @@ void __read(int fd, void *buf, size_t size) { read(fd, buf, size); }
         _Data;                                                                           \
     })
 
-#define pcat(a, b) a##b
-#define cat(a, b)  /* Meow? */ pcat(a, b)
-
 #define repeat(x, ...) /* Handy macro for repeating something. */                        \
     for (var cat(_, __VA_ARGS__) = 0; cat(_, __VA_ARGS__) < (x); cat(_, __VA_ARGS__)++)
 
@@ -318,23 +586,6 @@ int file_size(FILE *fp) {
     return end_pos - last_pos;
 }
 
-#define expand(x) /* The use case of this macro is left as an exercise to the reader. */ x
-#define __demon(code, ID)                                                                \
-    ({                                                                                   \
-        __pid_t cat(fork_, ID) = fork();                                                 \
-        if (cat(fork_, ID) < 0) {                                                        \
-            perror("Failed to fork!");                                                   \
-            exit(1);                                                                     \
-        } else if (cat(fork_, ID) == 0) {                                                \
-            code;                                                                        \
-            exit(0);                                                                     \
-        };                                                                               \
-        cat(fork_, ID);                                                                  \
-    })
-#define demon(code)    /* Fork the current process and creates an async process that runs  \
-                          in parallel, it also returns the PID of the child process to the \
-                          parent, in case you need to wait until the child dies. */        \
-    __demon(code, expand(__COUNTER__))
 #define watch(pid) /* Waits for your child to die. */ waitpid(pid, NULL, 0)
 
 #define create_pond(filename, pipe_name, code)                                           \
@@ -393,10 +644,12 @@ void __print(string input, byte has_color, byte new_line) {
 
     var skip = no;
     repeat(len) {
-        if (input[ _ ] == 1) skip = yes;
-        if (input[ _ ] == 2) skip = no;
+        var cur = input[ _ ];
 
-        if (has_color || !skip) printf("%c", input[ _ ]);
+        if (cur == 1) skip = yes;
+        if (cur == 2) skip = no;
+
+        if (has_color || !skip) printf("%c", cur);
     }
 
     if (new_line) printf("\n");
@@ -437,6 +690,8 @@ void __type(string input, byte has_color, byte new_line, float time) {
     }
 
     if (new_line) printf("\n");
+
+    free(input);
 }
 
 // Raw, controllable version of the fprint macro.
@@ -445,15 +700,15 @@ void __fprint(string input, byte has_color, byte new_line) {
     free(input);
 }
 
-#define print(text)    /* Prints text to the console, with a new line, and omits color if \
-                          has_color = no. */                                              \
-    __print(text, has_color, yes)
-#define fprint(...)    /* Prints text to the console using a printf formatting, otherwise \
-                          same as print(text). */                                         \
+// #define print(text)    /* Prints text to the console, with a new line, and omits color if \
+//                           has_color = no. */                                              \
+//     __print(text, has_color, yes)
+#define print(...)     /* Prints text to the console using a printf formatting, otherwise \
+                           same as print(text). */                                        \
     __fprint(format(__VA_ARGS__), has_color, yes)
-#define type(text)    /* Has a typewriter effect and utilizes default_time, otherwise the \
-                         same as print(text). */                                          \
-    __type(text, has_color, yes, default_time)
+#define type(...)     /* Has a typewriter effect and utilizes default_time, otherwise the \
+                          same as print(text). */                                         \
+    __type(format(__VA_ARGS__), has_color, yes, default_time)
 
 // Reads a line from stdin. Obviously allocates memory, so free it afterwards.
 string readline() {
@@ -466,6 +721,7 @@ string readline() {
     push(input, __init);
 
     while (((__init = getchar()) != EOF) && __init != '\n' && __init > 10) {
+        printf("%p %i\n", input, count(input));
         push(input, __init);
     }
 
@@ -548,8 +804,13 @@ ptr dynamic(ptr me, string name) {
     return result;
 }
 
-#define stage(name) void cat(stage_, name)(game_data * user)
-
+#define stage(name)                                                                      \
+    void cat(__stage_, name)(game_data * user, bool has_color);                          \
+    void cat(stage_, name)(game_data * user) {                                           \
+        if (top_of_stack == NULL) top_of_stack = user;                                   \
+        cat(__stage_, name)(user, user->has_color);                                      \
+    }                                                                                    \
+    void cat(__stage_, name)(game_data * user, bool has_color)
 void sample_stage(ptr user) {}
 // function pointer? in c?
 typedef typeof(sample_stage) *stage;
@@ -564,7 +825,7 @@ void transfer(string name, struct game_data *data) {
 
     if (function == null) {
         bool has_color = yes;
-        fprint(cBHRED("ERROR!") " unknown transfer target: " cBHYEL("%s") ".", name);
+        print(cBHRED("ERROR!") " unknown transfer target: " cBHYEL("%s") ".", name);
         exit(1);
     }
 
@@ -590,8 +851,8 @@ struct command_choice {
     stage  func_ptr;
 };
 
-#define cmd(name, desc, func) /* less keystrokes! */                                     \
-    (struct command_choice) { name, desc, (stage) func }
+#define cmd(name, func, ...) /* less keystrokes! */                                      \
+    (struct command_choice) { name, format(__VA_ARGS__), (stage) func }
 
 enum command_func_options {
     hide_commands    = 0,
@@ -599,14 +860,16 @@ enum command_func_options {
     commands_in_text = 2
 };
 
-float default_time = 0.02f;
+float default_time = 0.002f;
 
-#define command(options, help_text, ...)                                                 \
-    ({                                                                                   \
-        struct command_choice _options[] = { __VA_ARGS__ };                              \
-        u4 choice_length = sizeof(_options) / sizeof(struct command_choice);             \
-        __command(                                                                       \
-            options, help_text, has_color, default_time, choice_length, __VA_ARGS__);    \
+#define command(options, help_text, ...)                                                     \
+    ({                                                                                       \
+        struct command_choice _options[] = { __VA_ARGS__ };                                  \
+        u4  choice_length = sizeof(_options) / sizeof(struct command_choice);                \
+        var output        = __command(                                                       \
+            options, help_text, has_color, default_time, choice_length, __VA_ARGS__); \
+        repeat(choice_length) { free(_options[ _ ].description); }                           \
+        output;                                                                              \
     })
 
 /*
@@ -631,16 +894,18 @@ stage __command(
         = copy_string(cBGRN("Available commands:\n") cHYEL("[") "HELP" cHYEL("]"));
 
     repeat(length) {
-        cmds[ _ ]      = va_arg(cmd_list, struct command_choice);
-        cmds[ _ ].name = copy_string(cmds[ _ ].name);
-        inplace_toupper(cmds[ _ ].name);
+        var cur = &cmds[ _ ];
 
-        var old_coms       = available_commands;
-        available_commands = format(
-            "%s\n" cHYEL("[") "%s" cHYEL("]"), available_commands, cmds[ _ ].name);
+        *cur      = va_arg(cmd_list, struct command_choice);
+        cur->name = copy_string(cur->name);
+        inplace_toupper(cur->name);
+
+        var old_coms = available_commands;
+        available_commands
+            = format("%s\n" cHYEL("[") "%s" cHYEL("]"), available_commands, cur->name);
         free(old_coms);
 
-        inplace_tolower(cmds[ _ ].name);
+        inplace_tolower(cur->name);
     }
 
     va_end(cmd_list);
@@ -648,7 +913,7 @@ stage __command(
     var choice = (ptr) -1;
 
     printf("\n");
-    if (commands_option == commands_in_text) type(available_commands);
+    if (commands_option == commands_in_text) type("%s", available_commands);
 
     while (choice == (ptr) -1) {
         printf("\n> ");
@@ -658,12 +923,11 @@ stage __command(
         inplace_tolower(input);
 
         repeat(length) {
-            if (equal(input, cmds[ _ ].name)) {
-                choice = cmds[ _ ].func_ptr;
-                if (cmds[ _ ].description != null) {
-                    type("");
-                    type(cmds[ _ ].description);
-                }
+            var cur = cmds[ _ ];
+
+            if (equal(input, cur.name)) {
+                choice = cur.func_ptr;
+                if (cur.description != null) { type("\n%s", cur.description); }
                 break;
             }
         }
@@ -674,23 +938,39 @@ stage __command(
         }
 
         if (equal(input, "help")) {
-            var format_text = help_text == null
-                                  ? commands_option == hide_commands
-                                        ? "No help text provided. You're on your own."
-                                        : "There is no help text available right now."
-                                  : help_text;
-            type(format_text);
-            type("\n");
+            type(
+                "%s",
+                help_text == 0 || equal(help_text, "")
+                    ? commands_option == hide_commands
+                          ? "\nNo help text provided. You're on your own."
+                          : "\nThere is no help text available right now."
+                    : help_text);
+            // type("\n");
             sleep(0.25);
-            if (commands_option != hide_commands) type(available_commands);
-        } else
+            if (commands_option != hide_commands) { type("\n%s", available_commands); }
+        } else if (equal(input, "memory leak check")) {
+            check_for_leaks(no);
+            printf("\n");
+        }
+
+        else {
             __print("I don't understand.", no, yes);
+        }
 
         free(input);
     }
 
     free(cmds);
     free(available_commands);
+
+    repeat(length) {
+        var cur = &cmds[ _ ];
+
+        if (cur->name != null) free(cur->name);
+        free(cur->description);
+    }
+
+    demon(check_for_leaks(yes));
 
     return choice;
 }
@@ -712,8 +992,10 @@ var item_names = (string[]) { "Torn clothes" };
 
 void add_to_inventory(game_data *game, u4 item_index) {
     repeat(16) {
-        if (game->items[ _ ] == 0) {
-            game->items[ _ ] = item_index;
+        var cur = game->items[ _ ];
+
+        if (cur == 0) {
+            cur = item_index;
             break;
         }
     }
