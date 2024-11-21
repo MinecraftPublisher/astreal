@@ -300,6 +300,7 @@ ptr betterrealloc(ptr original, u4 size) {
                              .backtrace = bt_array,
                              .symbols   = backtrace_symbols(bt_array, 32) };
 
+    printf("initial %p end %p\n", original, &result[ 1 ]);
     return &result[ 1 ];
 }
 
@@ -371,8 +372,9 @@ ptr grow(ptr _array, u4 inflation) {
 #define last(arr)       /* Gets the last element of an array, */ arr[ count(arr) - 1 ]
 #define push(arr, item) /* Pushes a value into an array. */                              \
     ({                                                                                   \
-        grow(arr, 1);                                                                    \
+        var r_out = grow(arr, 1);                                                        \
         last(arr) = item;                                                                \
+        r_out;                                                                           \
     })
 #define pop(arr) /* Pops a value from an array and returns its value. */                 \
     ({                                                                                   \
@@ -712,21 +714,15 @@ void __fprint(string input, byte has_color, byte new_line) {
 
 // Reads a line from stdin. Obviously allocates memory, so free it afterwards.
 string readline() {
-    var  input = newarray(char);
-    char __init;
+    var    line = newarray(char);
+    size_t len  = 0;
+    int    c;
 
-    while ((__init = getchar()) == EOF);
+    while ((c = fgetc(stdin)) != EOF && c != '\n') line = push(line, c);
 
-    if (__init <= 10 || __init == '\n') return input;
-    push(input, __init);
+    if (line) line = push(line, 0);
 
-    while (((__init = getchar()) != EOF) && __init != '\n' && __init > 10) {
-        printf("%p %i\n", input, count(input));
-        push(input, __init);
-    }
-
-    input[ count(input) ] = 0;
-    return input;
+    return line;
 }
 
 #define equal(x, y) /* Checks the equality of two strings. */ (strcmp(x, y) == 0)
