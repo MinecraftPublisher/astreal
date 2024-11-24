@@ -1,7 +1,18 @@
-Body = (_ a:(IncludeCall / StructDef / ObjectDefine / Function / Keyword) _ { return a })*
+Body = (_ a:(IncludeCall / StructDef / ObjectDefine / Function / FunctionLikeMacro / BasicMacro / FunctionLikeMacroCall / Keyword) _ { return a })*
 
 IncludeCall = '$' _ 'include' _ '(' _ name:('!'? (!')' .)* { return text() }) _ ')' _ ';'
 	{ return { kind: 'include', path: name, text: text() } }
+
+FunctionLikeMacro = 'macro' _ replace:Rawword _ args:('(' _ word1:Rawword? _ rest:(',' _ a:Rawword _ { return a })* abyss:(_ ',' _ '...' _ { return 1n })? ')' { return [word1, ...rest, abyss] })
+	_ _with:Pooka { return { kind: 'macro-function', replace, args: args.filter(e => e), with: _with.substring(1, _with.length - 1), text: text() } }
+Pooka = (('{' ((!'}' !'{' .) / ('{' Pooka '}'))* '}'))* { return text() }
+BasicMacro = '#' _ 'define' _ replace:Rawword _ _with:((('\\\n' { return '' }) / (!'\n' boo:. { return boo }))*) 
+	{ return { kind: 'macro-basic', replace, with: _with.join(''), text: text() } }
+
+FunctionLikeMacroCall = '$' _ name:Rawword content:MacroArgs 
+	{ return { kind: 'preprocess-call', name, content: content, text: text() } }
+MacroArgs = _ '(' a:Arg1? args:(',' b:Arg1 { return b })* ')' _ { return [a, ...args] }
+Arg1 = a:(![(),] .)* { return text() }
 
 StructDef = 'struct' _ name:Rawword _ '{' fields:(_ a:VarType _ ';' _ { return a })+ '}'
 	{ return { kind: 'type-definition', name, fields, text: text() } }
@@ -27,13 +38,13 @@ VarType = type:Rawword _ ands:(_ '&' _ { return 1 })* _ name:Rawword
 Block = '{' _ value:(_ g:(
     		a:(
 				b:StateOrLoop { return b } /
-                b:(Block) { return b } /
+                b:(Block / FunctionLikeMacro / BasicMacro) { return b } /
     			b:(c: Action ';' { return c }) { return b }
             ) { return a }
          ) _ { return g })* _ '}' 
 	{ return { kind: 'block', actions: value, text: text() } }
 
-Action = _ value:(ReturnExp / (!'if' !'while' !'for' f:Call { return f }) / VariableReassignment / VariableAssignment / Block / Keyword) _ 
+Action = _ value:(FunctionLikeMacroCall / ReturnExp / (!'if' !'while' !'for' f:Call { return f }) / VariableReassignment / VariableAssignment / Block / Keyword) _ 
 	{ return { kind: 'action', operation: value, text: text() } }
 
 StateOrLoop = ('if' _ '(' _ e:Expression _ ')' _ code:(Block / Action) { return { kind: 'condition', condition: e, code, text: text() } }) / 

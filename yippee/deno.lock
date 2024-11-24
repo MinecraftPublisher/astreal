@@ -1,0 +1,32 @@
+{
+  "version": "3",
+  "packages": {
+    "specifiers": {
+      "npm:json-colorizer": "npm:json-colorizer@3.0.1",
+      "npm:json-colorizer@^3.0.1": "npm:json-colorizer@3.0.1"
+    },
+    "npm": {
+      "colorette@2.0.20": {
+        "integrity": "sha512-IfEDxwoWIjkeXL1eXcDiow4UbKjhLdq6/EuSVR9GMN7KVH3r9gQ83e73hsz1Nd1T3ijd5xv1wcWRYO+D6kCI2w==",
+        "dependencies": {}
+      },
+      "json-colorizer@3.0.1": {
+        "integrity": "sha512-4YyRAbD6eHeRnJD9vo0zjiU5fyY9QR6T+iYuH5DpO0XPThKWozpD4MaeY/8nLZIkHC3yEQMFLL+6P94E+JekDw==",
+        "dependencies": {
+          "colorette": "colorette@2.0.20"
+        }
+      }
+    }
+  },
+  "remote": {},
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/assert@1"
+    ],
+    "packageJson": {
+      "dependencies": [
+        "npm:json-colorizer@^3.0.1"
+      ]
+    }
+  }
+}
