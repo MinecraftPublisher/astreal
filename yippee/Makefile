@@ -5,3 +5,6 @@ parser: # Install peggy.js for this to work.
 
 main:
 	deno run  --allow-env --allow-read --allow-all main.ts
+
+file_out:
+	deno run  --allow-env --allow-read --allow-all main.ts > output.json

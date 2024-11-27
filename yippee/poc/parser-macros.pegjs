@@ -1,7 +1,7 @@
 Body = (_ a:(IncludeCall / StructDef / ObjectDefine / Function / FunctionLikeMacro / BasicMacro / FunctionLikeMacroCall / Keyword) _ { return a })*
 
-IncludeCall = '$' _ 'include' _ '(' _ name:('!'? (!')' .)* { return text() }) _ ')' _ ';'
-	{ return { kind: 'include', path: name, text: text() } }
+IncludeCall = 'include' _ target:(('[' _ name:('!'? (!')' .)* { return text() }) _ ']' { return { name, is_path: false } }) / (('!'? (!')' .)* { return { name: text(), is_path: true } })) _ ';'
+	{ return { kind: 'include', path: target.name, is_path: target.is_path, text: text() } }
 
 FunctionLikeMacro = 'macro' _ replace:Rawword _ args:('(' _ word1:Rawword? _ rest:(',' _ a:Rawword _ { return a })* abyss:(_ ',' _ '...' _ { return 1n })? ')' { return [word1, ...rest, abyss] })
 	_ _with:Pooka { return { kind: 'macro-function', replace, args: args.filter(e => e), with: _with.substring(1, _with.length - 1), text: text() } }
@@ -17,9 +17,9 @@ Arg1 = a:(![(),] .)* { return text() }
 StructDef = 'struct' _ name:Rawword _ '{' fields:(_ a:VarType _ ';' _ { return a })+ '}'
 	{ return { kind: 'type-definition', name, fields, text: text() } }
 
-ObjectDefine = 'define' _ name:DefineName _ 
+ObjectDefine = 'define' _ '(' _ return:Rawword _ ')' _ name:DefineName _ 
 	vars:('(' _ VarType? _ (',' _ a:VarType _ { return a })* ')') _ code:Block 
-	{ return { kind: 'define-function', name, 
+	{ return { kind: 'define-function', name, return: return,
     	vars: vars.map(e => e && e[0]?.kind === 'variable-type' ? e[0] : e)
     	.filter(e => e?.kind === 'variable-type'), code, text: text() } }
 

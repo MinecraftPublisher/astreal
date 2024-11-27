@@ -1,0 +1,6 @@
+// does not work!
+// unplanned for future implementation!
+
+macro separate(a, ...) {
+
+}

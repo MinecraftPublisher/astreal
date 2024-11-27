@@ -1,0 +1,20 @@
+struct person {
+	string name;
+    u1 age;
+    string ageToString();
+}
+
+define person:ageToString() {
+	return toString(me.age);
+}
+
+$include(!stdio);
+
+void main() {
+    person main = {
+    	.name = "Mark",
+        .age = 200
+    };
+    
+    println(main.ageToString());
+}
