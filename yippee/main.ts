@@ -11,8 +11,9 @@ type Action = { kind: 'action', operation: Keyword | ReturnExp | Call | Variable
 // type FunctionLikeMacroCall = { kind: 'preprocess-call', name: string, content: string[] } & NodeData
 // type FunctionLikeMacro = { kind: 'macro-function', args: (string | BigInt)[], replace: string, with: string } & NodeData
 // type BasicMacro = { kind: 'macro-basic', replace: string, with: string } & NodeData
-type ReturnExp = { kind: 'return', value: string } & NodeData
-type Call = { kind: 'call', name: Subname } & NodeData
+type ReturnExp = { kind: 'return', value: Expression } & NodeData
+type Call = { kind: 'call', name: Subname, calls: CallPart[] } & NodeData
+type CallPart = { kind: 'function-call', args: Expression[] } & NodeData
 type Subname = { kind: 'property', parts: string[] } & NodeData
 type Variable = (VariableAssignment | VariableReassignment) & NodeData
 type VariableReassignment = { kind: 'variable-reassignment', name: Subname, value: Expression, op: string } & NodeData & { lifetime: number }
@@ -32,8 +33,15 @@ type WhileLoop = { kind: 'while-loop', code: (Block | Action), condition: Call }
 type ForLoop = { kind: 'for-loop', code: (Block | Action), start: Variable, condition: Call, cycle: (Call | VariableReassignment) } & NodeData
 type Keyword = { kind: 'keyword', value: string } & NodeData
 
-type LiterallyAnything = Keyword | ExpressionPart | IncludeCall | StructDef | VarType | ObjectDefine | Block | Action | ReturnExp | Call | Subname | VariableReassignment | VariableAssignment | Expression | Cast | _Array | _Object | _Number | _String | _Function | StateOrLoop | Condition | WhileLoop | ForLoop
-type NodeData = { kind: string, scope: number[], text: string, id: number, my_scope: number }
+type LiterallyAnything = Keyword | CallPart | ExpressionPart | IncludeCall | StructDef | VarType | ObjectDefine | Block | Action | ReturnExp | Call | Subname | VariableReassignment | VariableAssignment | Expression | Cast | _Array | _Object | _Number | _String | _Function | StateOrLoop | Condition | WhileLoop | ForLoop
+type NodeData = {
+    kind: string
+    scope: number[]
+    text: string
+    id: number
+    my_scope: number
+    is_pure: boolean
+}
 
 // const $rng = () => Math.floor(Math.random() * 888888888888) + 111111111111
 
@@ -51,7 +59,8 @@ function Iterate<T>(obj: T, func: Function) {
     return obj as T
 }
 
-type ReferenceScope = { declarations: [string, number][], references: number[] }
+//                                     name    id      is_pure
+type ReferenceScope = { declarations: [string, number, boolean][], references: number[] }
 type TypeDefinition = { name: string, fields: { type: string, field: string, dimension: number }[] }
 
 let global_state: {
@@ -67,9 +76,9 @@ let global_state: {
     scopes: [
         {
             declarations: [
-                ['println', -1],
-                ['<', -1],
-                ['+', -1]
+                ['println', -3, false],
+                ['<', -2, true],
+                ['+', -1, true]
             ],
             references: []
         }
@@ -79,6 +88,10 @@ let global_state: {
 
 let init_state = JSON.parse(JSON.stringify(global_state))
 
+function array_purity(x: (any & NodeData)[]) {
+    return x.filter(e => !e.is_pure).length === 0
+}
+
 /**
  * Processing steps:
  *  1. Adding scopes (includes variable fixes, sanity checks and also type declaration)
@@ -86,9 +99,9 @@ let init_state = JSON.parse(JSON.stringify(global_state))
  *  3. Resolving array types
  */
 
-function AddScope(object: LiterallyAnything, _scope: number[] = []) {
+function add_scope(object: LiterallyAnything, parent: LiterallyAnything, _scope: number[] = []) {
     let scope = _scope
-    if (!object.kind) return Iterate(object, e => AddScope(e, scope))
+    if (!object.kind) return Iterate(object, e => add_scope(e, object, scope))
     if (object.kind) {
         object.scope = scope
         object.id = global_state.global_id++
@@ -108,10 +121,11 @@ function AddScope(object: LiterallyAnything, _scope: number[] = []) {
         }
     }
 
-    object = Iterate(object, e => AddScope(e, scope))
+    object = Iterate(object, e => add_scope(e, object, scope))
+    object.is_pure = true // assume purity by default.
 
-    if(object.kind === 'action') {
-        if(!object.operation) return undefined
+    if (object.kind === 'action') {
+        if (!object.operation) return undefined
     }
 
     if (object.kind === 'variable-assignment') {
@@ -119,7 +133,8 @@ function AddScope(object: LiterallyAnything, _scope: number[] = []) {
 
         for (let i = 0; i < scope.length; i++) {
             if (!global_state.scopes[scope[i]].declarations.find(e => e[0] === object.name)) {
-                global_state.scopes[scope[i]].declarations.push([object.name, object.id])
+                // variable definitions are, by default, pure.
+                global_state.scopes[scope[i]].declarations.push([object.name, object.id, true])
             }
         }
 
@@ -127,24 +142,32 @@ function AddScope(object: LiterallyAnything, _scope: number[] = []) {
     } else if (object.kind === 'for-loop') {
         if (object.start.kind === 'variable-assignment') {
             // it was this easy?? it took me 2 days to fix the for-loop lifetime problem...
-            // and it was all just a simple assignment??
+            // and it was all just a simple assignment?
             object.start.my_scope = object.code.my_scope
         }
+
+        object.is_pure = object.start.is_pure && object.condition.is_pure &&
+            object.cycle.is_pure && object.code.is_pure
     } else if (object.kind === 'function') {
         if (object.text === 'var') {
             throw `Function return type cannot be var!`
         }
 
         object.vars.map(e => e.scope = object.code.scope)
+
+        object.is_pure = object.code.is_pure
+        global_state.scopes[0].declarations.push([object.name, object.id, object.code.is_pure])
     } else if (object.kind === 'property') {
         // find variable index based on keyword
 
         let resolved_id: number | null = null
+        let resolved_index: number = -1
 
         for (let i = scope.length - 1; i >= 0; i--) {
             let x = global_state.scopes[scope[i]].declarations.find(e => e[0] === object.parts[0])
             if (!x) continue
             resolved_id = x[1]
+            resolved_index = i
             break
         }
 
@@ -153,18 +176,22 @@ function AddScope(object: LiterallyAnything, _scope: number[] = []) {
 Possible Reasons:
   1. Variable used before declaration
   2. Illegal characters used in name\n`)
-  console.error(global_state)
+            console.error(global_state)
             throw ''
         }
+
+        object.is_pure = global_state.scopes[resolved_index].declarations.find(e => e[1] === resolved_id)![2]
 
         global_state.scopes[scope[scope.length - 1]].references = [...new Set([...global_state.scopes[scope[scope.length - 1]].references, resolved_id])]
     } else if (object.kind === 'variable-reassignment') {
         let resolved_id: number | null = null
+        let variable_scope = -1
 
         for (let i = scope.length - 1; i >= 0; i--) {
             let x = global_state.scopes[scope[i]].declarations.find(e => e[0] === object.name.parts[0])
             if (!x) continue
             resolved_id = x[1]
+            variable_scope = i
             break
         }
 
@@ -172,7 +199,34 @@ Possible Reasons:
             throw `Variable ${object.name} not found in reassignment!`
         }
 
+        if (variable_scope <= scope[scope.length - 1]) {
+            // reassigning a function from a higher scope leads to impurity.
+            object.is_pure = false
+        }
+
         global_state.scopes[scope[scope.length - 1]].references = [...new Set([...global_state.scopes[scope[scope.length - 1]].references, resolved_id])]
+    } else if (object.kind === 'call') {
+        object.is_pure = object.name.is_pure && array_purity(object.calls)
+    } else if (object.kind === 'include') {
+        object.is_pure = false
+    } else if (object.kind === 'action') {
+        object.is_pure = object.operation.is_pure
+    } else if (object.kind === 'expression') {
+        object.is_pure = object.value.is_pure
+    } else if (object.kind === 'function-call') {
+        object.is_pure = array_purity(object.args)
+    } else if (object.kind === 'block') {
+        object.is_pure = array_purity(object.actions)
+    } else if (object.kind === 'condition') {
+        object.is_pure = object.condition.is_pure && object.code.is_pure
+    } else if (object.kind === 'return') {
+        object.is_pure = object.value.is_pure
+    } else if (object.kind === 'while-loop') {
+        object.is_pure = object.condition.is_pure && object.code.is_pure
+    } else if (object.kind === 'array') {
+        object.is_pure = array_purity(object.value)
+    } else if (object.kind === 'object') {
+        object.is_pure = array_purity(Object.values(object.value))
     }
 
     return object
@@ -180,8 +234,8 @@ Possible Reasons:
 
 let had_unused = false
 
-function AssignLifetime(object: LiterallyAnything) {
-    if (!object.kind) return Iterate(object, AssignLifetime)
+function assign_lifetime(object: LiterallyAnything) {
+    if (!object.kind) return Iterate(object, assign_lifetime)
 
     if (object.kind === 'variable-assignment') {
         // Q: why  -5?
@@ -209,23 +263,29 @@ function AssignLifetime(object: LiterallyAnything) {
         }
     }
 
-    return Iterate(object, AssignLifetime)
+    return Iterate(object, assign_lifetime)
 }
 
-function LifetimeRepetition(object: LiterallyAnything) {
+function clean_pure(object: LiterallyAnything) {
+    if(!object.kind) return Iterate(object, clean_pure)
+
+    // TODO: Implement this. You also need to check parental purity, good luck future me!
+}
+
+function lifetime_repetition(object: LiterallyAnything) {
     had_unused = false
-    let out = AssignLifetime(AddScope(object) as LiterallyAnything) as LiterallyAnything
+    let out = assign_lifetime(add_scope(object, { kind: 'block', actions: [object as Block], id: -100, is_pure: false, my_scope: 0, text: '', scope: [] }) as LiterallyAnything) as LiterallyAnything
 
     while (had_unused) {
         had_unused = false
         global_state = JSON.parse(JSON.stringify(init_state))
-        out = AssignLifetime(AddScope(out) as LiterallyAnything) as LiterallyAnything
+        out = assign_lifetime(add_scope(out, { kind: 'block', actions: [out as Block], id: -100, is_pure: false, my_scope: 0, text: '', scope: [] }) as LiterallyAnything) as LiterallyAnything
     }
 
     return out
 }
 
-function ResolveType(object: LiterallyAnything) {
+function resolve_types(object: LiterallyAnything) {
     // builtin types:
     // char (u1), bool (u1), short (i2), 
 }
@@ -236,11 +296,12 @@ const colorize = color.colorize
 
 const parse = PARSER.parse
 
+// const parse = (x) => ([] as LiterallyAnything[])
+
 console.time('Parsing')
 
 let result: Main = parse(`
-    
-import [myfile.yippee];
+
 import stdio;
 
 void main() {
@@ -249,10 +310,19 @@ void main() {
     var x = 5;
     var y = +(34, x);
 
-    {} {} {} {} {} {}
+    {} {
+        println(println(y));
+
+        if(<(x, 2)) {
+            var z = +(55, x);
+        }
+    } {} {} {} {}
 }
 
-`).map(e => LifetimeRepetition(e)) as Main
+`).map(e => lifetime_repetition(e)) as Main
+
+// TODO: Make a colorizer using the same PEG grammar,
+//       just alter it to output colored text instead of code.
 
 console.log(colorize(result, { 'indent': 4 }))
 console.warn(global_state)
