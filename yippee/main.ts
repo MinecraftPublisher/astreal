@@ -21,17 +21,26 @@ type VariableAssignment = { kind: 'variable-assignment', name: string, value: Ex
 type Expression = { kind: 'expression', cast?: Cast, value: ExpressionPart } & NodeData
 type Cast = { kind: 'cast', to: string, dimension: number } & NodeData
 type ExpressionPart = (_Array | _Object | Call | Subname | _Number | _String) & NodeData
-type _Array = { kind: 'array', value: Expression[] } & NodeData
-type _Object = { kind: 'object', value: { [key: string]: Expression } } & NodeData
+type _Array = { kind: 'array', items: Expression[], type } & NodeData
+type _Object = { kind: 'object', values: { [key: string]: Expression } } & NodeData
 type _Number = { kind: 'number', value: number } & NodeData
 type _String = { kind: 'string', value: string } & NodeData
-type FunctionHeader = { type: string, name: string, vars: VarType[] }
+type FunctionHeader = { type: string, name: string, vars: VarType[], function_header: boolean }
 type _Function = { kind: 'function', code: Block } & FunctionHeader & NodeData
 type StateOrLoop = (Condition | WhileLoop | ForLoop) & NodeData
 type Condition = { kind: 'condition', code: (Block | Action), condition: Call } & NodeData
 type WhileLoop = { kind: 'while-loop', code: (Block | Action), condition: Call } & NodeData
 type ForLoop = { kind: 'for-loop', code: (Block | Action), start: Variable, condition: Call, cycle: (Call | VariableReassignment) } & NodeData
 type Keyword = { kind: 'keyword', value: string } & NodeData
+
+type Type =
+    { type: 'normal', value: string } |
+    { type: 'array', value: Type } |
+    { type: 'function', value: FunctionHeader } |
+    { type: 'object', value: { [key: string]: Type } } |
+    { type: 'dynamic' } |
+    { type: 'alias', ref: string } |
+    { type: 'void' }
 
 type LiterallyAnything = Keyword | CallPart | ExpressionPart | IncludeCall | StructDef | VarType | ObjectDefine | Block | Action | ReturnExp | Call | Subname | VariableReassignment | VariableAssignment | Expression | Cast | _Array | _Object | _Number | _String | _Function | StateOrLoop | Condition | WhileLoop | ForLoop
 type NodeData = {
@@ -43,98 +52,263 @@ type NodeData = {
     is_pure: boolean
 }
 
+import * as PARSER from './parser.js'
+import color from 'json-colorizer'
+const colorize = color.colorize
+
+const parse = PARSER.parse
+
 // const $rng = () => Math.floor(Math.random() * 888888888888) + 111111111111
 
-function Iterate<T>(obj: T, func: Function) {
+function normalize_text(text: string) {
+    const lines = text.replace(/\t/g, '    ').split('\n')
+    let default_indent = Infinity
+
+    for (const l of lines.slice(1)) {
+        const f = l.match(/^ */g)
+        if (!f) continue
+        if (f[0].length < default_indent) default_indent = f[0].length
+    }
+
+    return [lines[0], ...lines.slice(1).map(e => e.replace(new RegExp(`^ {${default_indent}}`, 'g'), ''))].join('\n')
+}
+
+function Iterate<T>(obj: T, func: (e: LiterallyAnything) => (LiterallyAnything | undefined)) {
     for (let key of Object.keys(obj as Object)) {
         if (obj[key]?.kind) {
             obj[key] = func(obj[key])
         }
 
         if (obj[key]?.map) {
-            obj[key] = obj[key].map((e: any[]) => func(e)).filter(e => !!e)
+            obj[key] = obj[key].map((e: LiterallyAnything) => func(e)).filter(e => !!e)
         }
     }
 
     return obj as T
 }
 
-//                                     name    id      is_pure
-type ReferenceScope = { declarations: [string, number, boolean][], references: number[] }
+type Declaration = { name: string, id: number, is_pure: boolean, function: boolean }
+type ReferenceScope = { declarations: Declaration[], references: number[] }
 type TypeDefinition = { name: string, fields: { type: string, field: string, dimension: number }[] }
+
+//@ts-ignore
+const sizes_raw = (new TextDecoder().decode((await new Deno.Command('./yippee_helper', {
+    args: ['size']
+}).output()).stdout)).split('\n').filter(e => e !== '').map(e => e.split(' '))
+let sizes = {}
 
 let global_state: {
     global_scope: number
     global_variable_index: number
     global_id: number
     scopes: ReferenceScope[]
-    types: { [key: string]: TypeDefinition }
+    types: { [key: string]: Type }
 } = {
-    global_scope: 0,
+    global_scope: 1,
     global_variable_index: 0,
     global_id: 0,
     scopes: [
         {
             declarations: [
-                ['println', -3, false],
-                ['<', -2, true],
-                ['+', -1, true]
+                { name: 'cat', id: -4, function: true, is_pure: true },
+                { name: 'println', id: -3, function: true, is_pure: false },
+                { name: '<', id: -2, function: true, is_pure: true },
+                { name: '+', id: -1, function: true, is_pure: true }
             ],
+            references: []
+        },
+        {
+            declarations: [],
             references: []
         }
     ],
-    types: {}
+    types: {
+        byte: {
+            type: 'normal',
+            value: 'byte'
+        },
+        char: {
+            type: 'normal',
+            value: 'byte'
+        },
+        int: {
+            type: 'normal',
+            value: 'int'
+        },
+        long: {
+            type: 'normal',
+            value: 'long'
+        },
+        var: {
+            type: 'dynamic'
+        },
+        string: {
+            type: 'array',
+            value: {
+                type: 'normal',
+                value: 'char'
+            }
+        },
+        pointer: {
+            type: 'normal',
+            value: 'ptr'
+        },
+        void: {
+            type: 'void'
+        }
+    }
 }
 
-let init_state = JSON.parse(JSON.stringify(global_state))
+for (let i = 0; i < sizes_raw[0].length; i++) sizes[sizes_raw[0][i]] = parseInt(sizes_raw[1][i])
 
-function array_purity(x: (any & NodeData)[]) {
+function _type_size(_type: Type): number | null {
+    if (_type.type === 'alias') return _type_size(global_state.types[_type.ref])
+    if (_type.type === 'array') return _type_size(global_state.types.pointer)
+    if (_type.type === 'function') return _type_size(global_state.types.pointer)
+    if (_type.type === 'object') return Object.values(_type.value).map(e => _type_size(e)).reduce((a, b) => a === null || b === null ? null : a + b, 0)
+    if (_type.type === 'void') return 0
+    if (_type.type === 'normal') {
+        if (!(_type.value in sizes)) error({} as LiterallyAnything, `Type ${_type.value} does not exist as a built-in!`)
+        return sizes[_type.value]
+    }
+    if (_type.type === 'dynamic') return null
+
+    return null
+}
+
+const init_state = JSON.parse(JSON.stringify(global_state))
+
+function array_purity<T>(x: (T & NodeData)[]) {
     return x.filter(e => !e.is_pure).length === 0
 }
 
 /**
  * Processing steps:
- *  1. Adding scopes (includes variable fixes, sanity checks and also type declaration)
- *  2. Assigning variable lifetimes
- *  3. Resolving array types
+ *  1. Adding scopes (includes variable fixes, sanity checks and also type declaration) DONE
+ *  2. Assigning variable lifetimes DONE
+ *  3. Resolving array types DONE
+ *  4. Resolving dynamic types
  */
 
-function add_scope(object: LiterallyAnything, parent: LiterallyAnything, _scope: number[] = []) {
+function format_fields(fields: (VarType | FunctionHeader)[]) {
+    let obj: { [key: string]: Type } = {}
+    for (let f of fields) {
+        if ('function_header' in f) {
+            obj[f.name] = {
+                type: 'function',
+                value: f as FunctionHeader
+            }
+        } else {
+            if (global_state.types[f.type]) {
+                if (f.dimension === 0) obj[f.name] = global_state.types[f.type]
+                else {
+                    let out = global_state.types[f.type]
+
+                    for (let i = 0; i < f.dimension; i++) {
+                        out = {
+                            type: 'array',
+                            value: out
+                        }
+                    }
+
+                    obj[f.name] = out
+                }
+            } else {
+                if (f.dimension === 0) {
+                    obj[f.name] = {
+                        type: 'normal',
+                        value: f.type
+                    }
+                } else {
+                    let out: Type = {
+                        type: 'normal',
+                        value: f.type
+                    }
+
+                    for (let i = 0; i < f.dimension; i++) {
+                        out = {
+                            type: 'array',
+                            value: out
+                        }
+                    }
+
+                    obj[f.name] = out
+                }
+            }
+        }
+    }
+
+    return obj
+}
+
+function error(obj: LiterallyAnything, text: string) {
+    console.error('\n\n' + text + '\n')
+    console.error(normalize_text(obj.text))
+    console.error('\n')
+    throw ''
+}
+
+function add_scope(object: LiterallyAnything, _scope: number[] = []) {
     let scope = _scope
-    if (!object.kind) return Iterate(object, e => add_scope(e, object, scope))
+    if (!object.kind) return Iterate(object, e => add_scope(e, scope))
     if (object.kind) {
         object.scope = scope
         object.id = global_state.global_id++
+        object.is_pure = true // assume purity by default.
     }
 
     object.my_scope = scope[scope.length - 1]
     if (object.kind === 'block') {
         if (object.actions.length === 0) return undefined
 
-        scope = [...scope, global_state.global_scope++]
         object.my_scope = global_state.global_scope
-        object.my_scope = global_state.global_scope - 1
+        scope = [...scope, global_state.global_scope++]
 
-        global_state.scopes[global_state.global_scope] = {
+        if (!global_state.scopes[global_state.global_scope]) global_state.scopes[global_state.global_scope] = {
             declarations: [],
             references: []
         }
     }
 
-    object = Iterate(object, e => add_scope(e, object, scope))
-    object.is_pure = true // assume purity by default.
+    if (object.kind === 'function') {
+        global_state.scopes[0].declarations.push({
+            name: object.name,
+            id: object.id,
+            function: true,
+            is_pure: object.code.is_pure
+        })
+
+        // Include function arguments inside the function block scope.
+        const block_scope = global_state.global_scope
+
+        for(let a of object.vars) {
+            global_state.scopes[global_state.global_scope].declarations.push({
+                function: false,
+                is_pure: true,
+                id: global_state.global_variable_index++,
+                name: a.name
+            })
+        }
+    }
+
+    object = Iterate(object, e => add_scope(e, scope))
 
     if (object.kind === 'action') {
         if (!object.operation) return undefined
-    }
-
-    if (object.kind === 'variable-assignment') {
+        object.is_pure = object.operation.is_pure
+    } else if (object.kind === 'variable-assignment') {
         object.id = ++global_state.global_variable_index
 
-        for (let i = 0; i < scope.length; i++) {
-            if (!global_state.scopes[scope[i]].declarations.find(e => e[0] === object.name)) {
+        const temp_scope = [0, ...scope]
+        for (let i = 0; i < temp_scope.length; i++) {
+            if (!global_state.scopes[temp_scope[i]].declarations.find(e => e[0] === object.name)) {
                 // variable definitions are, by default, pure.
-                global_state.scopes[scope[i]].declarations.push([object.name, object.id, true])
+                global_state.scopes[temp_scope[i]].declarations.push({
+                    name: object.name,
+                    id: object.id,
+                    function: false,
+                    is_pure: object.value.is_pure
+                })
             }
         }
 
@@ -149,24 +323,25 @@ function add_scope(object: LiterallyAnything, parent: LiterallyAnything, _scope:
         object.is_pure = object.start.is_pure && object.condition.is_pure &&
             object.cycle.is_pure && object.code.is_pure
     } else if (object.kind === 'function') {
-        if (object.text === 'var') {
+        if (object.type === 'var') {
             throw `Function return type cannot be var!`
         }
 
         object.vars.map(e => e.scope = object.code.scope)
 
         object.is_pure = object.code.is_pure
-        global_state.scopes[0].declarations.push([object.name, object.id, object.code.is_pure])
+        global_state.scopes[0].declarations = global_state.scopes[0].declarations.map(e => e.name === object.name && e.function ? { ...e, is_pure: object.code.is_pure } : e)
     } else if (object.kind === 'property') {
         // find variable index based on keyword
 
-        let resolved_id: number | null = null
+        let resolved_id: Declaration | null = null
         let resolved_index: number = -1
 
-        for (let i = scope.length - 1; i >= 0; i--) {
-            let x = global_state.scopes[scope[i]].declarations.find(e => e[0] === object.parts[0])
+        const temp_scope = [0, ...scope]
+        for (let i = temp_scope.length - 1; i >= 0; i--) {
+            const x = global_state.scopes[temp_scope[i]].declarations.find(e => e.name === object.parts[0])
             if (!x) continue
-            resolved_id = x[1]
+            resolved_id = x
             resolved_index = i
             break
         }
@@ -180,23 +355,25 @@ Possible Reasons:
             throw ''
         }
 
-        object.is_pure = global_state.scopes[resolved_index].declarations.find(e => e[1] === resolved_id)![2]
+        object.is_pure = resolved_id.is_pure
+        if (!resolved_id.function && resolved_index <= object.scope[object.scope.length - 1] && resolved_index === 0) object.is_pure = false
 
-        global_state.scopes[scope[scope.length - 1]].references = [...new Set([...global_state.scopes[scope[scope.length - 1]].references, resolved_id])]
+        global_state.scopes[scope[scope.length - 1]].references = [...new Set([...global_state.scopes[scope[scope.length - 1]].references, resolved_id.id])]
     } else if (object.kind === 'variable-reassignment') {
         let resolved_id: number | null = null
         let variable_scope = -1
 
-        for (let i = scope.length - 1; i >= 0; i--) {
-            let x = global_state.scopes[scope[i]].declarations.find(e => e[0] === object.name.parts[0])
+        const temp_scope = [0, ...scope]
+        for (let i = temp_scope.length - 1; i >= 0; i--) {
+            const x = global_state.scopes[temp_scope[i]].declarations.find(e => e.name === object.name.parts[0] && !e.function)
             if (!x) continue
-            resolved_id = x[1]
+            resolved_id = x.id
             variable_scope = i
             break
         }
 
         if (!resolved_id) {
-            throw `Variable ${object.name} not found in reassignment!`
+            throw `Variable ${object.name.parts.join('.')} not found in reassignment!`
         }
 
         if (variable_scope <= scope[scope.length - 1]) {
@@ -204,13 +381,13 @@ Possible Reasons:
             object.is_pure = false
         }
 
+        if (!object.value.is_pure) object.is_pure = false
+
         global_state.scopes[scope[scope.length - 1]].references = [...new Set([...global_state.scopes[scope[scope.length - 1]].references, resolved_id])]
     } else if (object.kind === 'call') {
         object.is_pure = object.name.is_pure && array_purity(object.calls)
     } else if (object.kind === 'include') {
         object.is_pure = false
-    } else if (object.kind === 'action') {
-        object.is_pure = object.operation.is_pure
     } else if (object.kind === 'expression') {
         object.is_pure = object.value.is_pure
     } else if (object.kind === 'function-call') {
@@ -218,15 +395,44 @@ Possible Reasons:
     } else if (object.kind === 'block') {
         object.is_pure = array_purity(object.actions)
     } else if (object.kind === 'condition') {
-        object.is_pure = object.condition.is_pure && object.code.is_pure
+        object.is_pure = object.condition.is_pure && object.code && object.code.is_pure
     } else if (object.kind === 'return') {
         object.is_pure = object.value.is_pure
     } else if (object.kind === 'while-loop') {
         object.is_pure = object.condition.is_pure && object.code.is_pure
     } else if (object.kind === 'array') {
-        object.is_pure = array_purity(object.value)
+        object.is_pure = array_purity(object.items)
     } else if (object.kind === 'object') {
-        object.is_pure = array_purity(Object.values(object.value))
+        object.is_pure = array_purity(Object.values(object.values))
+    } else if (object.kind === 'type-definition') {
+        if (object.fields.length === 1 && object.fields[0].name === '_') {
+            if (global_state.types[object.name]) {
+                error(object, `Type ${object.name} already exists!`)
+            }
+
+            if (!global_state.types[object.fields[0].type]) {
+                error(object, `Type ${object.fields[0].type} does not exist!`)
+            }
+
+            if (!('function_header' in object.fields[0])) global_state.types[object.name] = global_state.types[object.fields[0].type]
+            else {
+                global_state.types[object.name] = {
+                    type: 'function',
+                    value: object.fields[0]
+                }
+            }
+        } else {
+            const final: Type = {
+                type: 'object',
+                value: format_fields(object.fields)
+            }
+
+            if (global_state.types[object.name]) {
+                error(object, `Type ${object.name} already exists!`)
+            }
+
+            global_state.types[object.name] = final
+        }
     }
 
     return object
@@ -261,25 +467,31 @@ function assign_lifetime(object: LiterallyAnything) {
             object.start.lifetime = i
             break
         }
+    } else if (object.kind === 'block') {
+        if (object.actions.length === 0) return undefined
+    } else if (object.kind === 'condition') {
+        if (!object.code) {
+            if (!object.condition.is_pure) {
+                error(object, 'Empty if statement contains impure code. Consider placing the code outside of the condition\'s clause.')
+            }
+
+            return undefined
+        }
     }
 
     return Iterate(object, assign_lifetime)
 }
 
-function clean_pure(object: LiterallyAnything) {
-    if(!object.kind) return Iterate(object, clean_pure)
-
-    // TODO: Implement this. You also need to check parental purity, good luck future me!
-}
-
 function lifetime_repetition(object: LiterallyAnything) {
     had_unused = false
-    let out = assign_lifetime(add_scope(object, { kind: 'block', actions: [object as Block], id: -100, is_pure: false, my_scope: 0, text: '', scope: [] }) as LiterallyAnything) as LiterallyAnything
+    let out = assign_lifetime(add_scope(object) as LiterallyAnything) as LiterallyAnything
 
     while (had_unused) {
         had_unused = false
+        const prev_types = global_state.types
         global_state = JSON.parse(JSON.stringify(init_state))
-        out = assign_lifetime(add_scope(out, { kind: 'block', actions: [out as Block], id: -100, is_pure: false, my_scope: 0, text: '', scope: [] }) as LiterallyAnything) as LiterallyAnything
+        global_state.types = prev_types
+        out = assign_lifetime(add_scope(out) as LiterallyAnything) as LiterallyAnything
     }
 
     return out
@@ -290,39 +502,21 @@ function resolve_types(object: LiterallyAnything) {
     // char (u1), bool (u1), short (i2), 
 }
 
-import * as PARSER from './parser.js'
-import color from 'json-colorizer'
-const colorize = color.colorize
-
-const parse = PARSER.parse
-
 // const parse = (x) => ([] as LiterallyAnything[])
 
 console.time('Parsing')
 
-let result: Main = parse(`
-
-import stdio;
-
-void main() {
-    println("Hello world!");
-
-    var x = 5;
-    var y = +(34, x);
-
-    {} {
-        println(println(y));
-
-        if(<(x, 2)) {
-            var z = +(55, x);
-        }
-    } {} {} {} {}
-}
-
-`).map(e => lifetime_repetition(e)) as Main
+//@ts-ignore
+const result: Main = parse(await Deno.readTextFile('input.yip')).map(e => lifetime_repetition(e)) as Main
 
 // TODO: Make a colorizer using the same PEG grammar,
 //       just alter it to output colored text instead of code.
 
-console.log(colorize(result, { 'indent': 4 }))
+function color_log(obj) {
+    console.log(colorize(obj, { indent: 4 }))
+}
+
+color_log(result)
 console.warn(global_state)
+
+// TODO: One day I will become future me.

@@ -1,0 +1,18 @@
+import stdio;
+
+struct my_string { string _; }
+
+struct two_strings {
+    my_string x;
+    my_string&& y;
+}
+
+struct main_func {
+    void _(int argc, string& argv);
+}
+
+main_func main(int argc, string& argv) {
+    println(cat("Hello world! ", argc));
+
+    return main;
+}

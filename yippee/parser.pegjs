@@ -20,7 +20,7 @@ Function "function definition" = header:FunctionHeader _ code:Block
 FunctionHeader "function header" = (! 'macro') (! 'define') (! 'struct') (! 'import') type:Rawword _ name:Rawword _ 
 	vars:('(' _ VarType? _ (',' _ a:VarType _ { return a })* ')') { return { type, name, 
     	vars: vars.map(e => e && e[0]?.kind === 'variable-type' ? e[0] : e)
-    	.filter(e => e?.kind === 'variable-type') } }
+    	.filter(e => e?.kind === 'variable-type'), function_header: true } }
 
 VarType "variable type" = type:Rawword _ ands:(_ '&' _ { return 1 })* _ name:Rawword 
 	{ return { kind: 'variable-type', type, name, dimension: ands.length, text: text() } }
