@@ -3,3 +3,5 @@ build/
 old/
 astreal/
 yippee/parser.js
+yippee/output.json
+yippee/yippee_helper
