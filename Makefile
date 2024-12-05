@@ -1,28 +1,13 @@
-all: clean shell stages count
+all: parser main
 
-clean:
-	rm -rf build/
-	mkdir build/
-	rm -rf astreal/
-	mkdir astreal/
+parser: # Install peggy.js for this to work.
+	peggy parser.pegjs  --allowed-start-rules \* --format es
 
-# cds:
-# 	clang -g -rdynamic src/cds.c -o build/cds
+helper:
+	clang helper.c -o yippee_helper
 
-shell:
-	clang -g -rdynamic src/shell.c -o build/shell
+main:
+	deno run  --allow-env --allow-read --allow-all main.ts
 
-# run_cds:
-#	build/cds
-
-run_shell:
-	sleep 0.2
-	build/shell
-
-stages:
-	clang -shared -fPIC src/stages/stages.c -o build/stages.so
-
-count:
-	@echo
-	@echo "Line count:"
-	@find . -name '*.h' -o -name '*.c' | xargs wc -lc
+file_out:
+	deno run  --allow-env --allow-read --allow-all main.ts > output.json

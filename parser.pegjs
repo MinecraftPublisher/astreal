@@ -1,4 +1,4 @@
-Body "code" = (_ a:(IncludeCall / Function / StructDef / ObjectDefine / Keyword) _ { return a })*
+Body "code" = (_ a:(IncludeCall / (VariableAssignment _ ';') / Function / StructDef / ObjectDefine / SubnameCall) _ { return a })*
 
 IncludeCall "import directive" = 'import' _ target:(('[' _ name:((!']' .)+ { return text() }) _ ']' { return { name, is_path: false } }) / ((![\[\]]) (!';' .)+ { return { name: text(), is_path: true } })) _ ';'
 	{ return { kind: 'include', path: target.name, is_path: target.is_path, text: text() } }
@@ -12,11 +12,11 @@ ObjectDefine "object definition" = 'define' _ name:DefineName _
     	vars: vars.map(e => e && e[0]?.kind === 'variable-type' ? e[0] : e)
     	.filter(e => e?.kind === 'variable-type'), code, text: text() } }
 
-DefineName "object function name" = main:Rawword parts:(':' _ a:Rawword _ { return a })*
-	{ return { kind: 'property', parts: [main, ...parts], text: text() } }
+DefineName "object function name" = main:Rawword _ ':' _ parts:Rawword
+	{ return { kind: 'property', parts: [main, parts], text: text() } }
 
 Function "function definition" = header:FunctionHeader _ code:Block 
-	{ return { kind: 'function', ...header, code, text: text() } }
+	{ return { kind: 'function', ...header, code, text: text(), header } }
 FunctionHeader "function header" = (! 'macro') (! 'define') (! 'struct') (! 'import') type:Rawword _ name:Rawword _ 
 	vars:('(' _ VarType? _ (',' _ a:VarType _ { return a })* ')') { return { type, name, 
     	vars: vars.map(e => e && e[0]?.kind === 'variable-type' ? e[0] : e)
@@ -34,7 +34,7 @@ Block "code block" = '{' _ value:(_ g:(
          ) _ { return g })* _ '}' 
 	{ return { kind: 'block', actions: value, text: text() } }
 
-Action "code action" = _ value:(ReturnExp / (!'if' !'while' !'for' f:Call { return f }) / VariableReassignment / VariableAssignment / Block / Keyword) _ 
+Action "code action" = _ value:(ReturnExp / Variable / (!'if' !'while' !'for' f:Call { return f }) / Block / Keyword) _ 
 	{ return { kind: 'action', operation: value, text: text() } }
 
 StateOrLoop "if statement, while or for loop" = ('if' _ '(' _ e:Expression _ ')' _ code:(Block / Action) { return { kind: 'condition', condition: e, code, text: text() } }) / 
@@ -44,33 +44,35 @@ StateOrLoop "if statement, while or for loop" = ('if' _ '(' _ e:Expression _ ')'
 ReturnExp "return expression" = 'return' _ value:Expression { return { kind: 'return', value, text: text() } }
 
 Variable "variable declaration or assignment" = VariableAssignment / VariableReassignment
-VariableReassignment "variable reassignment" = name:Subname _  op:AssignmentOperator _ value:Expression _
-    { return { kind: 'variable-reassignment', name, value, op, text: text() } }
-VariableAssignment "variable assignment" = type:Rawword _ name:Rawword _ '=' _ value:Expression _
-	{ return { kind: 'variable-assignment', type, name, value, text: text() } }
+VariableReassignment "variable reassignment" = name:Subname _  op:AssignmentOperator _ expression:Expression _
+    { return { kind: 'variable-reassignment', name, expression, op, text: text() } }
+VariableAssignment "variable assignment" = assign:VarType _ '=' _ expression:Expression _
+	{ return { kind: 'variable-assignment', assign, expression, text: text() } }
 AssignmentOperator "assignment operator" = [+\-*/%^&|]? '=' { return text() }
 
-Expression "expression" = (cast:Cast _ value:ExpressionPart 
-		{ return { kind: 'expression', cast, value, text: text(), text: text() } }) / 
-    (value:ExpressionPart 
-    	{ return { kind: 'expression', value, text: text(), text: text() } })
-ExpressionPart = a:(Array / Object / Call / Index / Subname / Number / String) { return a }
+Expression "expression" = (value:ExpressionPart 
+		{ return { kind: 'expression', value, text: text(), text: text() } }) / 
+    (value:ExpressionPart { return { kind: 'expression', value, text: text(), text: text() } })
+ExpressionPart = a:(Array / Object / Call / Index / Number / String) { return a }
 
-Call "function call" = name:SubnameCritical _ calls:(CallPart+) { return { kind: 'call', name, calls, text: text() } }
+Call "function call" = call:SubnameCall { return { kind: 'call', call, text: text() } }
 CallPart = _ '(' _ arg1:Expression? _ rest:(',' _ value:Expression _ { return value })* ')' _
     { return { kind: 'function-call', args: [arg1, ...rest].filter(e => !!e), text: text() } }
 
-Cast "type casting" = '(' _ to:Rawword ands:(_ '&' _ { return 1 })* _ ')'
-	{ return { kind: 'cast', to, dimension: ands.length, text: text() } }
+// Cast "type casting" = '(' _ to:Rawword ands:(_ '&' _ { return 1 })* _ ')'
+//	{ return { kind: 'cast', to, dimension: ands.length, text: text() } }
 
-Index "array index" = name:Subname _ vals:('[' _ val:Expression _ ']' { return val })+
+Index "array index" = name:SubnameCall _ vals:('[' _ val:Expression _ ']' { return val })+
 	{ return { kind: 'index', indexes: vals, text: text() } }
 
-SubnameCritical = main:RawwordCritical parts:('.' _ a:Rawword _ { return a })*
-	{ return { kind: 'property', parts: [main, ...parts], text: text() } }
+SubnameCall = name:SubnameCritical _ part:CallPart? _ tail_call:(_ '.' _ a:SubnameCall { return a })?
+	{ return { kind: 'tail-call', name: name.name, ...(part ? { part } : {}), ...(tail_call ? { tail_call } : {}), text: text() } }
 
-Subname "loose keyword" = main:Rawword parts:('.' _ a:Rawword _ { return a })*
-	{ return { kind: 'property', parts: [main, ...parts], text: text() } }
+SubnameCritical = main:RawwordCritical
+	{ return { kind: 'property', name: main, text: text() } }
+
+Subname "loose keyword" = main:Rawword
+	{ return { kind: 'property', name: main, text: text() } }
 
 Keyword "keyword" = value:Rawword { return { kind: 'keyword', value, text: text() } }
 Rawword = [_a-zA-Z][_a-zA-Z$0-9]* { return text().trim() }
@@ -89,8 +91,8 @@ Object "object instance" = '{' _ first:ObjectProp? _
     
 ObjectProp "object property" = '.' _ key:Rawword _ '=' _ value:Expression { return [key, value] }
 
-Array "array instance" = '[' _ first:Expression _ 
-	items:(',' _ a:Expression _ { return a })* _ ']' { return { kind: 'array', items: [first, ...items], text: text() } }
+Array "array instance" = '[' _ first:Expression? _ 
+	items:(',' _ a:Expression _ { return a })* _ ']' { return { kind: 'array', items: [first, ...items].filter(e => e), text: text() } }
 
 String "string" = e:(_ StringPart _)+ { return { kind: 'string', value: e.map(f => f[1]).join(''), text: text() } }
 StringPart = '"' text:((!'"' .)*) '"' { return text.map(e => e[1]).join('') }

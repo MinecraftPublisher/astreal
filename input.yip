@@ -1,0 +1,11 @@
+import stdio;
+
+void hello() {
+
+}
+
+void main() {
+    var x = 2;
+
+    println(x.balls);
+}

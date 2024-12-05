@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
 
     mode("size", {
         // byte, pointer, int, short, long, long long
-        printf("byte ptr int short long long_long array\n");
-        printf("%lu %lu %lu %lu %lu %lu %lu\n", sizeof(char), sizeof(void*), sizeof(int), sizeof(short), sizeof(long), sizeof(long long), sizeof(struct array));
+        printf("byte ptr int short long long_long double array\n");
+        printf("%lu %lu %lu %lu %lu %lu %lu %lu\n", sizeof(char), sizeof(void*), sizeof(int), sizeof(short), sizeof(long), sizeof(long long), sizeof(double), sizeof(struct array));
     });
 }

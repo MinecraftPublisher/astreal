@@ -1,7 +1,5 @@
 node_modules/
 build/
-old/
-astreal/
-yippee/parser.js
-yippee/output.json
-yippee/yippee_helper
+parser.js
+output.json
+yippee_helper
