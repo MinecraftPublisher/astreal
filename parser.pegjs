@@ -1,4 +1,4 @@
-Body "code" = (_ a:(IncludeCall / (VariableAssignment _ ';') / Function / StructDef / ObjectDefine / SubnameCall) _ { return a })*
+Body "code" = (_ a:(IncludeCall / (b:VariableAssignment _ ';' { return b }) / Function / StructDef / ObjectDefine / SubnameCall) _ { return a })*
 
 IncludeCall "import directive" = 'import' _ target:(('[' _ name:((!']' .)+ { return text() }) _ ']' { return { name, is_path: false } }) / ((![\[\]]) (!';' .)+ { return { name: text(), is_path: true } })) _ ';'
 	{ return { kind: 'include', path: target.name, is_path: target.is_path, text: text() } }

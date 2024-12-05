@@ -72,6 +72,6 @@ type GlobalState = {
 // Basically, 'static' properties are properties that act like invisible fields,
 // such as `.size` for structs (aka objects) or `.length` for arrays.
 
-type Property = { kind: 'static', owner: string, type: Type } |
+type Property = { kind: 'static', owner: string, type: Type, is_pure: boolean } |
 { kind: 'native', owner: string, 
 	transform: (state: GlobalState, object: LiterallyAnything) => [GlobalState, LiterallyAnything] }

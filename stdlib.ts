@@ -48,7 +48,8 @@ export const props: PropsIndex = {
 			type: {
 				type: 'normal',
 				value: 'bool'
-			}
+			},
+			is_pure: true
 		}
 	}
 }

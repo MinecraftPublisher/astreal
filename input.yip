@@ -1,11 +1,7 @@
 import stdio;
 
-void hello() {
-
-}
+var x = 3;
 
 void main() {
-    var x = 2;
-
-    println(x.balls);
+    println(+(x, "hello"));
 }
