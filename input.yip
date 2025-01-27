@@ -1,7 +1,5 @@
 import stdio;
 
-var x = 3;
-
 void main() {
-    println(+(x, "hello"));
+    println("Hello world.");
 }

@@ -9,17 +9,9 @@ export const types: TypeIndex = {
 		type: 'normal',
 		value: 'byte'
 	},
-	int: {
-		type: 'normal',
-		value: 'int'
-	},
-	long: {
-		type: 'normal',
-		value: 'long'
-	},
 	number: {
 		type: 'normal',
-		value: 'float'
+		value: 'number'
 	},
 	var: {
 		type: 'dynamic'
@@ -40,16 +32,34 @@ export const types: TypeIndex = {
 	}
 }
 
+// TODO: Tail call function type must reflect the return type, not the function itself.
+
+function builtin(name: string, owner: string, args: VarType[]): Property {
+	return {
+		kind: 'static',
+		owner,
+		type: {
+			type: 'function',
+			value: {
+				function_header: true,
+				name,
+				type: owner,
+				vars: [
+					{
+						type: owner,
+						name: 'me',
+						dimension: 0,
+					} as VarType,
+					...args
+				]
+			}
+		},
+		is_pure: true
+	}
+}
+
 export const props: PropsIndex = {
 	'number': {
-		'balls': {
-			kind: 'static',
-			owner: 'number',
-			type: {
-				type: 'normal',
-				value: 'bool'
-			},
-			is_pure: true
-		}
+		'to_string': builtin('to_string', 'number', [])
 	}
 }

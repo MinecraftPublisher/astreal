@@ -7,7 +7,7 @@ helper:
 	clang helper.c -o yippee_helper
 
 main:
-	deno run  --allow-env --allow-read --allow-all main.ts --log-file
+	deno run  --allow-all main.ts --log-file
 
 file_out:
-	deno run  --allow-env --allow-read --allow-all main.ts --log-file > output.json
+	deno run  --allow-all main.ts --log-file > output.json

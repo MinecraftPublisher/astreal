@@ -44,7 +44,7 @@ StateOrLoop "if statement, while or for loop" = ('if' _ '(' _ e:Expression _ ')'
 ReturnExp "return expression" = 'return' _ value:Expression { return { kind: 'return', value, text: text() } }
 
 Variable "variable declaration or assignment" = VariableAssignment / VariableReassignment
-VariableReassignment "variable reassignment" = name:Subname _  op:AssignmentOperator _ expression:Expression _
+VariableReassignment "variable reassignment" = name:SubnameCall _  op:AssignmentOperator _ expression:Expression _
     { return { kind: 'variable-reassignment', name, expression, op, text: text() } }
 VariableAssignment "variable assignment" = assign:VarType _ '=' _ expression:Expression _
 	{ return { kind: 'variable-assignment', assign, expression, text: text() } }

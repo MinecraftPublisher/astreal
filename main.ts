@@ -1,7 +1,8 @@
 /// <reference path="types.d.ts"/>
 
 import * as PARSER from './parser.js'
-import { color, colorize } from 'json-colorizer'
+import { colorize } from 'json-colorizer'
+import chalk from 'chalk'
 import *  as stdlib from './stdlib.ts'
 
 const parse = PARSER.parse
@@ -44,11 +45,11 @@ let sizes = {}
 let __neg = -1
 
 const vartype: (name: string, type: string) => VarType = (name, type) => { return { kind: 'variable-type', dimension: 0, is_pure: true, id: 0, type, name, text: `${type} ${name}`, my_scope: 0, scope: [0] } }
-const func: (name: string, ...args: string[]) => Declaration = (name, ...args) => {
+const func = (name: string, return_type: string, ...args: string[]): Declaration => {
 	return {
 		name, id: __neg--, function: true, is_pure: true, type: {
 			type: 'function', value: {
-				name, type: 'string', vars: args.filter((e, i) => i % 2 == 0).map((e, i) => vartype(e, args[i * 2 + 1])), function_header: true
+				name, type: return_type, vars: args.filter((e, i) => i % 2 == 0).map((e, i) => vartype(e, args[i * 2 + 1])), function_header: true
 			}
 		}
 	}
@@ -61,10 +62,10 @@ let global_state: GlobalState = {
 	scopes: [
 		{
 			declarations: [
-				func('cat', 'right', 'string', 'left', 'string'),
-				func('println', 'text', 'string'),
-				func('<', 'right', 'number', 'left', 'number'),
-				func('+', 'right', 'number', 'left', 'number')
+				func('cat', 'string', 'string', 'right', 'string', 'left', 'string'),
+				func('println', 'void', 'text', 'string'),
+				func('<', 'bool', 'right', 'number', 'left', 'number'),
+				func('+', 'number', 'right', 'number', 'left', 'number')
 			],
 			references: []
 		},
@@ -105,7 +106,7 @@ function type_name(type: Type): string {
 }
 
 function type_name_fmt(type: Type): string {
-	if (type.type === 'array') return `${type_name_fmt(type.value)}[]`
+	if (type.type === 'array') return `${type_name_fmt(type.value)}&`
 	if (type.type === 'dynamic') return `var`
 	if (type.type === 'function') return `${type.value.name}()`
 	if (type.type === 'normal') return `${type.value}`
@@ -151,7 +152,7 @@ function format_type(f: VarType | FunctionHeader): Type {
 				return out
 			}
 		} else {
-			if (!global_state.types[f.type]) error(f, 'Unknown type!')
+			if (!global_state.types[f.type]) error(f, `Unknown type ${f.type}!`)
 
 			if (f.dimension === 0) {
 				return global_state.types[f.type]
@@ -181,10 +182,10 @@ function format_fields(fields: (VarType | FunctionHeader)[]) {
 }
 
 function error(obj: LiterallyAnything, text: string) {
-	console.error('\n\n' + text + '\n')
-	console.error(normalize_text(obj.text))
-	console.error('\n')
-	throw ''
+	console.log('\n\n[Error]: ' + chalk.redBright(text) + '\n')
+	console.log(chalk.yellowBright(normalize_text(obj.text)) + '\n\n')
+
+	process.exit(1)
 }
 
 function deep_equal(x, y) {
@@ -213,8 +214,7 @@ function invert_tail_call(_call: SubnameCall, scope) {
 	}
 
 	if (!resolved_id) {
-		console.error(global_state)
-		console.error(`\nInvalid variable name ${call.name}!
+		error(_call, `\nInvalid variable/property name ${call.name}!
 Possible Reasons:
 1. Variable used before declaration
 2. Illegal characters used in name\n`)
@@ -237,6 +237,14 @@ Possible Reasons:
 
 	call.type = resolved_id.type
 
+	if (resolved_id.type.type === 'function') {
+		const ret_name = resolved_id.type.value.type
+		const ret_type = global_state.types[ret_name]
+
+		if (!ret_type) error(_call, `Function return type ${ret_name} on ${call.name} does not exist!`)
+		call.type = ret_type
+	}
+
 	do {
 		if (!call.type) {
 			const found = global_state.object_props[type_name_fmt(prev_type)]
@@ -251,11 +259,18 @@ Possible Reasons:
 							error(_call, `Got function for non-function type ${type_name_fmt(name_prop.type)}!`)
 						}
 
-						// TODO: Add purity to property definitions
 						call.is_pure = name_prop.is_pure
 
 						call.type = name_prop.type
 						prev_type = name_prop.type
+
+						if (name_prop.type.type === 'function') {
+							const ret_name = name_prop.type.value.type
+							const ret_type = global_state.types[ret_name]
+
+							if (!ret_type) error(_call, `Function return type ${ret_name} on ${call.name} does not exist!`)
+							call.type = ret_type
+						}
 					}
 				}
 			} else if (prev_type.type === 'object' && prev_type.value[call.name]) {
@@ -309,7 +324,7 @@ Possible Reasons:
 				})
 
 				flat[i].part = p
-				flat[i].name = `${type_name(prev.type)}:${flat[i].name}`
+				flat[i].name = `${JSON.stringify(prev.type)}::${flat[i].name}`
 
 				flat.splice(i - 1, 1)
 
@@ -325,11 +340,10 @@ import fs from 'node:fs'
 fs.rmSync('./astreal_debug.log')
 
 function add_scope(object: LiterallyAnything, _scope: number[] = [0]) {
-	if(!object) return
+	if (!object) return
 
-	if(object.text && Deno.args.includes('--log-file')) fs.writeFileSync('./astreal_debug.log', `${
-		fs.existsSync('./astreal_debug.log') ? fs.readFileSync('./astreal_debug.log', 'utf-8') : 'START OF ASTREAL PARSER LOG\n'
-	}\n\n[ASTREAL] ${object.text}\n`)
+	if (object.text && Deno.args.includes('--log-file')) fs.writeFileSync('./astreal_debug.log', `${fs.existsSync('./astreal_debug.log') ? fs.readFileSync('./astreal_debug.log', 'utf-8') : 'START OF ASTREAL PARSER LOG\n'
+		}\n\n[ASTREAL ${object.kind}] ${object.text}\n`)
 
 	let scope = _scope
 	if (!object.kind) return Iterate(object, e => add_scope(e, scope))
@@ -381,7 +395,7 @@ function add_scope(object: LiterallyAnything, _scope: number[] = [0]) {
 	}
 
 	if (object.kind === 'tail-call') {
-
+		// Do nothing!	
 	} else {
 		object = Iterate(object, e => add_scope(e, scope))
 	}
@@ -409,23 +423,22 @@ function add_scope(object: LiterallyAnything, _scope: number[] = [0]) {
 			object.type = object.expression.value.type
 		} else if (!deep_equal(object.expression.value.type, object.type)) {
 			// Order of execution matters!
-			error(object, 'Mismatched expression type in variable declaration')
+			const define_name = type_name_fmt(global_state.types[object.assign.type])
+			const expression_name = type_name_fmt(object.expression.value.type)
+			error(object, `Variable definition type ${define_name} does not match definition value of type ${expression_name}!`)
 		}
 
 		for (let i = 0; i < scope.length; i++) {
-			// console.warn(object.assign.name, global_state.scopes[scope[i]].declarations.map(e => e.name))
 			if (global_state.scopes[scope[i]].declarations.find(e => e.name === object.assign.name)) {
 				error(object, `Multiple definitions of variable ${object.assign.name} detected!`)
 			}
 		}
-		
-		// console.warn(scope[scope.length - 1], object.text, global_state.scopes[scope[scope.length - 1]])
+
 		global_state.scopes[scope[scope.length - 1]].declarations.push({
 			name: object.assign.name,
 			id: object.id,
 			function: false,
 			is_pure: object.expression.is_pure,
-			// TODO: Check type clashing
 			type: object.assign.type === 'var' ? object.expression.value.type : global_state.types[object.assign.type]
 		})
 	} else if (object.kind === 'for-loop') {
@@ -506,9 +519,10 @@ Possible Reasons:
 		global_state.scopes[scope[scope.length - 1]].references = [...new Set([...global_state.scopes[scope[scope.length - 1]].references, resolved_id.id])]
 	} else if (object.kind === 'call') {
 		object.is_pure = object.call.is_pure
-		object.type = object.call.type
 
 		object.call = invert_tail_call(object.call, _scope)
+		object.type = object.call.type
+		// TODO: Argument type and count checking
 	} else if (object.kind === 'include') {
 		object.is_pure = false
 	} else if (object.kind === 'expression') {
@@ -525,7 +539,21 @@ Possible Reasons:
 		object.is_pure = object.condition.is_pure && object.code.is_pure
 	} else if (object.kind === 'array') {
 		if (object.items.length === 0) object.type = { type: 'void' }
-		else object.type = { type: 'array', value: object.items[0].value.type }
+		else {
+			object.type = { type: 'array', value: object.items[0].value.type }
+			const name = type_name_fmt(object.items[0].value.type)
+
+			let i = 0
+			for (const item of object.items) {
+				const item_name = type_name_fmt(item.value.type)
+
+				if (item_name !== name) {
+					error(object, `Array item type ${item_name} at index ${i} does not match array type ${name}!`)
+				}
+
+				i++
+			}
+		}
 		object.is_pure = array_purity(object.items)
 	} else if (object.kind === 'object') {
 		// i REALLY don't feel like even attempting to automatically detect struct types.
@@ -565,6 +593,9 @@ Possible Reasons:
 		object.type = { type: 'normal', value: 'number' }
 	} else if (object.kind === 'object-define') {
 		// TODO
+	} else if (object.kind === 'string') {
+		// object.type = { type: 'array', value: { type: 'normal', value: 'char' } }
+		object.type = { type: 'normal', value: 'string' }
 	}
 
 	return object
@@ -588,7 +619,7 @@ function assign_lifetime(object: LiterallyAnything) {
 
 		if (object.lifetime === -5) {
 			had_unused = true
-			error(object, 'Warning: Unused variable {' + object.assign.name + '}!')
+			error(object, 'Error: Unused variable {' + object.assign.name + '}!')
 			return undefined
 		}
 	} else if (object.kind === 'for-loop') {
@@ -656,17 +687,19 @@ function assign_lifetime(object: LiterallyAnything) {
 
 function lifetime_repetition(object: LiterallyAnything[]) {
 	had_unused = false
-	global_state = JSON.parse(JSON.stringify(init_state))
-	
+	// const prev_types = global_state.types
+	// global_state = JSON.parse(JSON.stringify(init_state))
+	// global_state.types = prev_types
+
 	let out = object.map(e => add_scope(e)).map(e => assign_lifetime(e)) as LiterallyAnything[]
 	// let out = assign_lifetime(add_scope(object) as LiterallyAnything) as LiterallyAnything
 
 	while (had_unused) {
 		had_unused = false
 		const prev_types = global_state.types
-		out = out.map(e => add_scope(e)).map(e => assign_lifetime(e)) as LiterallyAnything[]
 		global_state = JSON.parse(JSON.stringify(init_state))
 		global_state.types = prev_types
+		out = out.map(e => add_scope(e)).map(e => assign_lifetime(e)) as LiterallyAnything[]
 	}
 
 	return out
@@ -683,7 +716,7 @@ console.time('Parsing')
 
 //@ts-ignore
 const parsed = parse(await Deno.readTextFile('input.yip'))
-const result: Main = lifetime_repetition(parsed.map(e => add_scope(e))) as Main
+const result: Main = lifetime_repetition(parsed) as Main
 
 // TODO: Make a colorizer using the same PEG grammar,
 //       just alter it to output colored text instead of code.
@@ -692,7 +725,7 @@ function color_log(obj) {
 	console.log(colorize(obj, { indent: 4 }))
 }
 
-color_log(result)
-console.warn(global_state)
+Deno.writeTextFile('output.json', JSON.stringify(result, null, 4))
+// console.warn(global_state)
 
 // TODO: One day I will become future me.
